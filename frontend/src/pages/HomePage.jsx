@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from "react";
-import { Link } from "react-router-dom";
+import React, { useState, useEffect, useRef } from "react";
+import { Link, useNavigate } from "react-router-dom"; 
 import VideoTracker from "../components/VideoTracker";
 import AssignmentCard from "../components/AssignmentCard";
 import profileIcon from '../assets/profile_icon.png';
@@ -39,7 +39,6 @@ const Chatbot = () => {
 
   return (
     <div className="flex flex-col h-full">
-      {/* Messages */}
       <div className="flex-1 overflow-y-auto p-3 space-y-2">
         {messages.map((m, idx) => (
           <div
@@ -54,8 +53,6 @@ const Chatbot = () => {
           </div>
         ))}
       </div>
-
-      {/* Predefined buttons */}
       <div className="flex flex-wrap gap-2 mb-2">
         {["Reminders", "Assignments", "Video Tracker", "Streaks", "Analytics"].map(
           (btn, idx) => (
@@ -69,8 +66,6 @@ const Chatbot = () => {
           )
         )}
       </div>
-
-      {/* Input field */}
       <div className="flex border-t p-2">
         <input
           type="text"
@@ -94,17 +89,60 @@ const Chatbot = () => {
 const HomePage = () => {
   const [chatOpen, setChatOpen] = useState(false);
   const [user, setUser] = useState(null);
+  const [isDropdownOpen, setDropdownOpen] = useState(false);
+  
+  const navigate = useNavigate();
+  const dropdownRef = useRef(null);
 
   // Check if user is logged in
   useEffect(() => {
     const storedUser = JSON.parse(localStorage.getItem("user"));
     if (storedUser) setUser(storedUser);
   }, []);
+  
+  // Effect to close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setDropdownOpen(false);
+      }
+    };
+    if (isDropdownOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [isDropdownOpen]);
+
+
+  const handleLogout = async () => {
+    try {
+        const res = await fetch("/api/auth/logout", {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+        });
+
+        const data = await res.json();
+        if (res.ok) {
+            localStorage.removeItem("user");
+            setUser(null);
+            setDropdownOpen(false);
+        } else {
+            console.error("Logout failed:", data.message);
+            alert("Logout failed. Please try again.");
+        }
+    } catch (error) {
+        console.error("Error during logout:", error);
+        alert("An error occurred during logout.");
+    }
+  };
+
 
   return (
     <div className="flex flex-col min-h-screen bg-gradient-to-br from-indigo-100 via-purple-200 to-pink-100 relative overflow-hidden text-gray-800">
 
-      {/* Glittery Particle Background */}
       <div className="absolute inset-0 z-0 pointer-events-none">
         {Array.from({ length: 80 }).map((_, i) => (
           <div
@@ -121,7 +159,6 @@ const HomePage = () => {
         ))}
       </div>
 
-      {/* Navbar */}
       <nav className="bg-white/30 backdrop-blur-lg shadow-lg py-4 px-8 flex justify-between items-center sticky top-0 z-50 rounded-b-2xl">
         <Link
           to="/"
@@ -142,15 +179,30 @@ const HomePage = () => {
           <Link to="/contactus" className="hover:text-pink-500 transition-colors duration-300">Contact Us</Link>
         </div>
 
-        {/* Conditional Navbar */}
         {user ? (
-          <div className="flex items-center gap-3">
-            <img
-              src={user.profileImage || profileIcon}
-              alt="Profile"
-              className="w-10 h-10 rounded-full border-2 border-indigo-700"
-            />
-            <span className="font-semibold text-gray-900">{user.name}</span>
+          <div className="relative" ref={dropdownRef}>
+            <button onClick={() => setDropdownOpen(!isDropdownOpen)} className="flex items-center gap-3 cursor-pointer">
+              <img
+                src={user.profileImage || profileIcon}
+                alt="Profile"
+                className="w-10 h-10 rounded-full border-2 border-indigo-700"
+              />
+              <span className="font-semibold text-gray-900">{user.name}</span>
+            </button>
+            {isDropdownOpen && (
+              <div 
+                className="absolute right-0 mt-3 py-2 w-48 bg-white/50 backdrop-blur-lg rounded-lg shadow-xl z-50
+                           transition-all duration-200 ease-in-out transform origin-top-right
+                           opacity-100 scale-100"
+              >
+                <button
+                  onClick={handleLogout}
+                  className="w-full text-left px-4 py-2 text-sm text-indigo-800 font-semibold rounded-lg hover:bg-indigo-100/50 transition-colors"
+                >
+                  Logout
+                </button>
+              </div>
+            )}
           </div>
         ) : (
           <div className="flex gap-3">
@@ -170,7 +222,6 @@ const HomePage = () => {
         )}
       </nav>
 
-      {/* Hero Section */}
       <header className="flex-1 flex flex-col items-center justify-center text-center px-6 py-20 relative z-10">
         <h1 className="text-5xl md:text-6xl font-extrabold leading-tight max-w-3xl">
           <span className="bg-gradient-to-r from-indigo-700 via-purple-700 to-pink-600 bg-clip-text text-transparent">
@@ -198,7 +249,6 @@ const HomePage = () => {
         </div>
       </header>
 
-      {/* Features Section */}
       <section className="py-20 bg-white/50 backdrop-blur-lg relative z-10">
         <div className="max-w-6xl mx-auto px-6 grid md:grid-cols-3 gap-10 text-center">
           {[
@@ -222,7 +272,6 @@ const HomePage = () => {
         </div>
       </section>
 
-      {/* Reviews Section */}
       <section className="py-20 bg-gradient-to-r from-purple-700 to-indigo-700 text-white text-center relative z-10">
         <h2 className="text-4xl font-bold mb-6">What Students Say</h2>
         <p className="max-w-3xl mx-auto mb-12 text-lg opacity-90">
@@ -247,7 +296,6 @@ const HomePage = () => {
         </div>
       </section>
 
-      {/* FAQ Section */}
       <section className="py-20 bg-white/50 backdrop-blur-lg relative z-10">
         <div className="max-w-4xl mx-auto px-6 text-center">
           <h2 className="text-3xl font-bold text-gray-900 mb-8">Frequently Asked Questions</h2>
@@ -266,7 +314,6 @@ const HomePage = () => {
         </div>
       </section>
 
-      {/* Pricing Section */}
       <section className="py-20 bg-gradient-to-r from-indigo-100 to-purple-200 text-center relative z-10">
         <h2 className="text-3xl font-bold text-gray-900 mb-6">Choose Your Plan</h2>
         <div className="grid md:grid-cols-2 gap-8 max-w-5xl mx-auto px-6">
@@ -306,7 +353,6 @@ const HomePage = () => {
         </div>
       </section>
 
-      {/* About Us Section */}
       <section id="about" className="py-16 text-center bg-white/50 backdrop-blur-lg relative z-10">
         <h2 className="text-3xl font-bold text-gray-900">ABOUT US</h2>
         <p className="mt-3 text-gray-800 max-w-2xl mx-auto">
@@ -314,8 +360,6 @@ const HomePage = () => {
           Our mission is to provide students with the right tools, structure, and motivation 
           to achieve their goals without distractions.
         </p>
-
-        {/* Team Grid */}
         <div className="mt-10 grid gap-8 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 max-w-7xl mx-auto px-6">
           <div className="bg-white rounded-xl shadow-lg p-6 hover:shadow-2xl transition">
             <img src="https://via.placeholder.com/150" alt="Team Member" className="w-24 h-24 mx-auto rounded-full border-4 border-indigo-600 shadow-md"/>
@@ -344,8 +388,8 @@ const HomePage = () => {
           </div>
         </div>
       </section>
-
-      {/* Footer */}
+      
+      {/* ✅ FULL, ORIGINAL FOOTER IS NOW INCLUDED */}
       <footer className="bg-gray-900 text-gray-200 py-10 mt-auto border-t-4 border-gradient-to-r from-purple-700 to-indigo-700 relative z-10">
         <div className="max-w-6xl mx-auto px-6 grid md:grid-cols-4 gap-8">
           <div>
@@ -382,7 +426,6 @@ const HomePage = () => {
         </p>
       </footer>
 
-      {/* Floating Chat Icon */}
       <div className="fixed bottom-5 right-5 z-50 flex flex-col items-end">
         {chatOpen && (
           <div className="mb-2 w-80 h-96 bg-white shadow-2xl rounded-xl overflow-hidden">
@@ -403,7 +446,6 @@ const HomePage = () => {
         </button>
       </div>
 
-      {/* Animation style */}
       <style>{`
         @keyframes pulse {0%,100%{opacity:0.2}50%{opacity:1}}
         .animate-pulse {animation:pulse 3s infinite;}
