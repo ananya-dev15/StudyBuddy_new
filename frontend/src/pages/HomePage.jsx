@@ -1,16 +1,21 @@
-import React, { useState, useEffect, useRef } from "react";
-import { Link, useNavigate } from "react-router-dom"; 
-import VideoTracker from "../components/VideoTracker";
-import AssignmentCard from "../components/AssignmentCard";
+import React, { useState, useEffect } from "react";
+import { Link, useNavigate } from "react-router-dom"; // useNavigate is needed for logout
 import profileIcon from '../assets/profile_icon.png';
-
+import AssignmentCard from "../components/AssignmentCard";
+import VideoTracker from "../components/VideoTracker";
 
 // ------------------- Chatbot Component -------------------
 const Chatbot = () => {
-  const [messages, setMessages] = useState([
-    { sender: "bot", text: "Hi! I’m StudyBuddy AI 🤖. How can I help you today?" },
-    { sender: "bot", text: "You can ask me about reminders, videos, assignments, streaks, or study tips!" },
-  ]);
+ const [messages, setMessages] = useState([
+  { sender: "bot", text: "Hey there! I’m StudyBuddy AI 🤖, your personal study companion." },
+  { sender: "bot", text: "My goal is to help you stay organized and motivated." },
+  { sender: "bot", text: "Here's what I can do:" },
+  { sender: "bot", text: "1. Give you quick study tips." },
+  { sender: "bot", text: "2. Track your learning progress." },
+  { sender: "bot", text: "3. Help manage your assignments and reminders." },
+  { sender: "bot", text: "4. Provide analytics to visualize your study streaks." },
+  { sender: "bot", text: "What's on your mind? Just type your question or choose from the options below!" },
+]);
   const [input, setInput] = useState("");
 
   const responses = {
@@ -39,37 +44,42 @@ const Chatbot = () => {
 
   return (
     <div className="flex flex-col h-full">
+      {/* Messages */}
       <div className="flex-1 overflow-y-auto p-3 space-y-2">
         {messages.map((m, idx) => (
           <div
             key={idx}
-            className={`p-2 rounded-lg max-w-xs ${
+            className={`p-2 rounded-lg max-w-[80%] ${
               m.sender === "bot"
-                ? "bg-indigo-100 text-gray-900 self-start"
-                : "bg-indigo-700 text-white self-end"
+                ? "bg-indigo-100 text-gray-900 self-start rounded-bl-none"
+                : "bg-indigo-700 text-white self-end rounded-br-none"
             }`}
           >
             {m.text}
           </div>
         ))}
       </div>
-      <div className="flex flex-wrap gap-2 mb-2">
+
+      {/* Predefined buttons */}
+      <div className="flex flex-wrap gap-2 p-3 border-t border-gray-200 bg-white">
         {["Reminders", "Assignments", "Video Tracker", "Streaks", "Analytics"].map(
           (btn, idx) => (
             <button
               key={idx}
               onClick={() => sendMessage(btn)}
-              className="bg-indigo-700 text-white px-3 py-1 rounded-lg text-sm hover:bg-indigo-800 transition-colors"
+              className="bg-gray-200 text-gray-700 px-3 py-1 rounded-full text-sm hover:bg-gray-300 transition-colors"
             >
               {btn}
             </button>
           )
         )}
       </div>
-      <div className="flex border-t p-2">
+
+      {/* Input field */}
+      <div className="flex p-3 border-t border-gray-200 bg-white">
         <input
           type="text"
-          className="flex-1 p-2 border rounded-l-lg focus:outline-none"
+          className="flex-1 p-2 border rounded-l-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder="Type your question..."
@@ -90,32 +100,14 @@ const HomePage = () => {
   const [chatOpen, setChatOpen] = useState(false);
   const [user, setUser] = useState(null);
   const [isDropdownOpen, setDropdownOpen] = useState(false);
-  
-  const navigate = useNavigate();
-  const dropdownRef = useRef(null);
 
-  // Check if user is logged in
+  const navigate = useNavigate();
+
   useEffect(() => {
     const storedUser = JSON.parse(localStorage.getItem("user"));
     if (storedUser) setUser(storedUser);
   }, []);
   
-  // Effect to close dropdown when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
-        setDropdownOpen(false);
-      }
-    };
-    if (isDropdownOpen) {
-      document.addEventListener("mousedown", handleClickOutside);
-    }
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-    };
-  }, [isDropdownOpen]);
-
-
   const handleLogout = async () => {
     try {
         const res = await fetch("/api/auth/logout", {
@@ -129,6 +121,7 @@ const HomePage = () => {
             localStorage.removeItem("user");
             setUser(null);
             setDropdownOpen(false);
+            navigate("/");
         } else {
             console.error("Logout failed:", data.message);
             alert("Logout failed. Please try again.");
@@ -143,6 +136,7 @@ const HomePage = () => {
   return (
     <div className="flex flex-col min-h-screen bg-gradient-to-br from-indigo-100 via-purple-200 to-pink-100 relative overflow-hidden text-gray-800">
 
+      {/* Glittery Particle Background */}
       <div className="absolute inset-0 z-0 pointer-events-none">
         {Array.from({ length: 80 }).map((_, i) => (
           <div
@@ -159,6 +153,7 @@ const HomePage = () => {
         ))}
       </div>
 
+      {/* Navbar */}
       <nav className="bg-white/30 backdrop-blur-lg shadow-lg py-4 px-8 flex justify-between items-center sticky top-0 z-50 rounded-b-2xl">
         <Link
           to="/"
@@ -179,8 +174,10 @@ const HomePage = () => {
           <Link to="/contactus" className="hover:text-pink-500 transition-colors duration-300">Contact Us</Link>
         </div>
 
+        {/* Conditional Navbar with Logout Dropdown */}
         {user ? (
-          <div className="relative" ref={dropdownRef}>
+          <div className="relative">
+            {/* Clickable profile icon to toggle dropdown */}
             <button onClick={() => setDropdownOpen(!isDropdownOpen)} className="flex items-center gap-3 cursor-pointer">
               <img
                 src={user.profileImage || profileIcon}
@@ -189,15 +186,13 @@ const HomePage = () => {
               />
               <span className="font-semibold text-gray-900">{user.name}</span>
             </button>
+
+            {/* Dropdown Menu */}
             {isDropdownOpen && (
-              <div 
-                className="absolute right-0 mt-3 py-2 w-48 bg-white/50 backdrop-blur-lg rounded-lg shadow-xl z-50
-                           transition-all duration-200 ease-in-out transform origin-top-right
-                           opacity-100 scale-100"
-              >
+              <div className="absolute right-0 mt-2 py-2 w-48 bg-white rounded-lg shadow-xl z-50">
                 <button
                   onClick={handleLogout}
-                  className="w-full text-left px-4 py-2 text-sm text-indigo-800 font-semibold rounded-lg hover:bg-indigo-100/50 transition-colors"
+                  className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-indigo-100"
                 >
                   Logout
                 </button>
@@ -222,6 +217,7 @@ const HomePage = () => {
         )}
       </nav>
 
+      {/* Hero Section */}
       <header className="flex-1 flex flex-col items-center justify-center text-center px-6 py-20 relative z-10">
         <h1 className="text-5xl md:text-6xl font-extrabold leading-tight max-w-3xl">
           <span className="bg-gradient-to-r from-indigo-700 via-purple-700 to-pink-600 bg-clip-text text-transparent">
@@ -249,6 +245,7 @@ const HomePage = () => {
         </div>
       </header>
 
+      {/* Features Section */}
       <section className="py-20 bg-white/50 backdrop-blur-lg relative z-10">
         <div className="max-w-6xl mx-auto px-6 grid md:grid-cols-3 gap-10 text-center">
           {[
@@ -272,6 +269,7 @@ const HomePage = () => {
         </div>
       </section>
 
+      {/* Reviews Section */}
       <section className="py-20 bg-gradient-to-r from-purple-700 to-indigo-700 text-white text-center relative z-10">
         <h2 className="text-4xl font-bold mb-6">What Students Say</h2>
         <p className="max-w-3xl mx-auto mb-12 text-lg opacity-90">
@@ -296,6 +294,7 @@ const HomePage = () => {
         </div>
       </section>
 
+      {/* FAQ Section */}
       <section className="py-20 bg-white/50 backdrop-blur-lg relative z-10">
         <div className="max-w-4xl mx-auto px-6 text-center">
           <h2 className="text-3xl font-bold text-gray-900 mb-8">Frequently Asked Questions</h2>
@@ -314,6 +313,7 @@ const HomePage = () => {
         </div>
       </section>
 
+      {/* Pricing Section */}
       <section className="py-20 bg-gradient-to-r from-indigo-100 to-purple-200 text-center relative z-10">
         <h2 className="text-3xl font-bold text-gray-900 mb-6">Choose Your Plan</h2>
         <div className="grid md:grid-cols-2 gap-8 max-w-5xl mx-auto px-6">
@@ -353,6 +353,7 @@ const HomePage = () => {
         </div>
       </section>
 
+      {/* About Us Section */}
       <section id="about" className="py-16 text-center bg-white/50 backdrop-blur-lg relative z-10">
         <h2 className="text-3xl font-bold text-gray-900">ABOUT US</h2>
         <p className="mt-3 text-gray-800 max-w-2xl mx-auto">
@@ -388,8 +389,8 @@ const HomePage = () => {
           </div>
         </div>
       </section>
-      
-      {/* ✅ FULL, ORIGINAL FOOTER IS NOW INCLUDED */}
+
+      {/* Footer */}
       <footer className="bg-gray-900 text-gray-200 py-10 mt-auto border-t-4 border-gradient-to-r from-purple-700 to-indigo-700 relative z-10">
         <div className="max-w-6xl mx-auto px-6 grid md:grid-cols-4 gap-8">
           <div>
@@ -426,26 +427,38 @@ const HomePage = () => {
         </p>
       </footer>
 
-      <div className="fixed bottom-5 right-5 z-50 flex flex-col items-end">
-        {chatOpen && (
-          <div className="mb-2 w-80 h-96 bg-white shadow-2xl rounded-xl overflow-hidden">
-            <div className="bg-indigo-700 text-white p-3 font-semibold flex justify-between items-center">
-              Chat with AI
-              <button onClick={() => setChatOpen(false)} className="ml-2 font-bold">✕</button>
-            </div>
-            <div className="p-3 h-full overflow-y-auto">
-              <Chatbot />
-            </div>
-          </div>
-        )}
+      {/* Floating Chat Icon */}
+    <div className="fixed bottom-5 right-5 z-50 flex flex-col items-end">
+  {chatOpen && (
+    <div className="mb-2 w-80 h-96 bg-white shadow-2xl rounded-xl overflow-hidden flex flex-col">
+      <div className="bg-indigo-700 text-white p-3 font-semibold flex justify-between items-center">
+        Chat with AI
         <button
-          onClick={() => setChatOpen(!chatOpen)}
-          className="w-16 h-16 rounded-full bg-indigo-700 shadow-xl flex items-center justify-center text-white text-2xl hover:bg-indigo-800 transition-colors"
+          onClick={() => setChatOpen(false)}
+          className="ml-2 font-bold text-lg leading-none"
         >
-          💬
+          ✕
         </button>
       </div>
+      {/* Embed Streamlit app in iframe */}
+      <iframe
+        src="http://localhost:8501"  // ✅ Run streamlit run streamlit_app.py --server.port 8501
+        className="flex-1"
+        style={{ border: "none" }}
+        title="StudyBuddy"
+      />
+    </div>
+  )}
+  <button
+    onClick={() => setChatOpen(!chatOpen)}
+    className="w-16 h-16 rounded-full bg-indigo-700 shadow-xl flex items-center justify-center text-white text-2xl hover:bg-indigo-800 transition-colors"
+  >
+    💬
+  </button>
+</div>
 
+
+      {/* Animation style */}
       <style>{`
         @keyframes pulse {0%,100%{opacity:0.2}50%{opacity:1}}
         .animate-pulse {animation:pulse 3s infinite;}
