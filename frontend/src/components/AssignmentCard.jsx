@@ -352,29 +352,29 @@ const AssignmentCard = () => {
     localStorage.setItem("assignment_tabSwitches", tabSwitches);
   }, [coins, tabSwitches]);
 
-  useEffect(() => {
-    const handleVisibilityChange = () => {
-      if (document.hidden) {
-        setTabSwitches((prevSwitches) => {
-          const newSwitches = prevSwitches + 1;
-          if (newSwitches > 5) {
-            if (coins >= 10) {
-              setCoins((prevCoins) => prevCoins - 10);
-              alert(`⚠️ Tab switched! -10 coins deducted`);
-            } else {
-              alert("🚫 No coins left! Stay on this tab.");
-              return prevSwitches;
-            }
-          } else {
-            alert(`⚠️ Tab switched! (${newSwitches}/5 free)`);
-          }
-          return newSwitches;
-        });
-      }
-    };
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
-  }, [coins]);
+  // useEffect(() => {
+  //   const handleVisibilityChange = () => {
+  //     if (document.hidden) {
+  //       setTabSwitches((prevSwitches) => {
+  //         const newSwitches = prevSwitches + 1;
+  //         if (newSwitches > 5) {
+  //           if (coins >= 10) {
+  //             setCoins((prevCoins) => prevCoins - 10);
+  //             alert(`⚠️ Tab switched! -10 coins deducted`);
+  //           } else {
+  //             alert("🚫 No coins left! Stay on this tab.");
+  //             return prevSwitches;
+  //           }
+  //         } else {
+  //           alert(`⚠️ Tab switched! (${newSwitches}/5 free)`);
+  //         }
+  //         return newSwitches;
+  //       });
+  //     }
+  //   };
+  //   document.addEventListener("visibilitychange", handleVisibilityChange);
+  //   return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  // }, [coins]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -449,10 +449,10 @@ const AssignmentCard = () => {
         </button>
       </div>
 
-      <div className="status-section">
+      {/* <div className="status-section">
         <span className="coins">🪙 {coins} Coins</span>
         <span className="switches">🔄 {tabSwitches}/5 Free</span>
-      </div>
+      </div> */}
 
       <div className="filter-section">
         <button className={filter === 'All' ? 'active-filter' : 'inactive-filter'} onClick={() => setFilter('All')}>All</button>

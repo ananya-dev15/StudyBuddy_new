@@ -28,6 +28,8 @@ const Login = () => {
      if (data.token) localStorage.setItem("token", data.token);
 
        setAppState({ coins: data.user.coins, streak: data.user.streak || 0, name: data.user.name, email: data.user.email, });
+       localStorage.setItem("streak", data.user.streak || 0);
+
 
      alert(`Welcome back, ${data.user.name}! Coins: ${data.user.coins}`);
      navigate("/"); 

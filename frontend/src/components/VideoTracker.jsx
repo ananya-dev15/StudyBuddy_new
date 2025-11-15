@@ -16,7 +16,7 @@ import { io } from "socket.io-client";
 // --- LOCAL STORAGE & HELPER FUNCTIONS ---
 
 const STORAGE_KEY = "video_tracker_v3";
-const INITIAL_COINS = 50;
+const INITIAL_COINS = 500;
 const TAB_SWITCH_COST = 5;
 const DAILY_BONUS = 1;
 const STREAK_BONUS = 5;
@@ -61,6 +61,37 @@ function extractYouTubeId(urlOrId) {
   const m = urlOrId.match(regex);
   return m ? m[1] : null;
 }
+
+// --- STUDY VIDEO FILTER ---
+const ALLOWED_KEYWORDS = [
+  "study", "lecture", "tutorial", "math", "science",
+  "coding", "programming", "react", "java", "ds algo",
+  "data structures", "education", "exam", "motivation"
+];
+
+
+async function isStudyVideo(videoId) {
+  try {
+    const res = await fetch(
+      `https://noembed.com/embed?url=https://www.youtube.com/watch?v=${videoId}`
+    );
+    const data = await res.json();
+
+    if (!data.title) return false;
+
+    const title = data.title.toLowerCase();
+
+    return ALLOWED_KEYWORDS.some((keyword) =>
+      title.includes(keyword.toLowerCase())
+    );
+  } catch (e) {
+    console.error("Video title check failed:", e);
+    return false;
+  }
+}
+
+
+
 
 
 /// --- API FUNCTIONS FOR TRACKING ---
@@ -145,26 +176,41 @@ const updateVideosSwitched = async (userId) => {
 
 
 // 🧠 Add this helper function (top of file or utils)
-const updateBackendStreak = async () => {
+const updateBackendStreak = async (userId, newStreak, lastWatched) => {
   try {
     const res = await fetch("/api/tracking/videos-watched", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
+      body: JSON.stringify({
+        userId,
+        streak: newStreak,
+        lastDayWatched: lastWatched,
+      }),
     });
+
     const data = await res.json();
+
     if (data.success) {
       setAppState((prev) => ({
         ...prev,
         streak: data.streak,
         lastDayWatched: data.lastDayWatched,
       }));
+      localStorage.setItem("streak", data.streak || 0);
+      console.log("🔥 Streak updated successfully:", data.streak);
+    } else {
+      console.warn("⚠️ Backend returned error:", data.message);
     }
   } catch (err) {
     console.error("⚠️ Error syncing streak:", err);
   }
 };
 
+const playRestrictionSound = () => {
+  const audio = new Audio("/alert_beep1.wav");
+  audio.play().catch(() => {});
+};
 
 
 
@@ -182,6 +228,8 @@ export default function VideoTracker() {
   // App state
   const { appState, setAppState } = useAppContext();
   
+const [showBlockedPopup, setShowBlockedPopup] = useState(false);
+const [blockedTitle, setBlockedTitle] = useState("");
 
   const [inputUrl, setInputUrl] = useState("");
   const [videoId, setVideoId] = useState(null);
@@ -252,6 +300,107 @@ return {
 
 
 };
+
+
+useEffect(() => {
+  const storedStreak = localStorage.getItem("streak");
+  if (storedStreak) {
+    setAppState((prev) => ({
+      ...prev,
+      streak: parseInt(storedStreak, 10),
+    }));
+  } else {
+    // Fetch once from backend if no local streak
+    const user = JSON.parse(localStorage.getItem("user"));
+    if (user) {
+      fetch(`/api/tracking/coins/${user._id || user.id}`)
+        .then((res) => res.json())
+        .then(() => {
+          fetch("/api/tracking/videos-watched", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+          })
+            .then((r) => r.json())
+            .then((data) => {
+              if (data.success) {
+                setAppState((p) => ({
+                  ...p,
+                  streak: data.streak,
+                }));
+                localStorage.setItem("streak", data.streak || 0);
+              }
+            });
+        });
+    }
+  }
+}, []);
+
+
+
+
+
+// 🧠 Split-screen detection
+// 🧠 Split-Screen Detection — Improved Version
+useEffect(() => {
+  let lastAlertTime = 0; 
+  let alertCooldown = 2000; // 2 sec cooldown to avoid spam
+
+  const detectSplitScreen = () => {
+    if (!isPlaying || focusRemaining <= 0) return;
+
+    const screenWidth = window.screen.width;
+    const windowWidth = window.innerWidth;
+    const ratio = windowWidth / screenWidth;
+
+    // 🚨 Trigger when window width < 70%
+    if (ratio < 0.7) {
+      const now = Date.now();
+
+      // Avoid rapid-fire alerts (only allow after cooldown)
+      if (now - lastAlertTime > alertCooldown) {
+        
+        // Show alert TWICE — BACK TO BACK
+        alert("⚠️ Focus Alert: Split screen detected!");
+        alert("⚠️ Please maximize the study window to continue!");
+
+        // OPTIONAL: Send event to backend
+        if (socketRef.current) {
+          socketRef.current.emit("split_screen_detected", {
+            timestamp: Date.now(),
+          });
+        }
+
+        lastAlertTime = now;
+      }
+    }
+  };
+
+  window.addEventListener("resize", detectSplitScreen);
+  document.addEventListener("visibilitychange", detectSplitScreen);
+
+  return () => {
+    window.removeEventListener("resize", detectSplitScreen);
+    document.removeEventListener("visibilitychange", detectSplitScreen);
+  };
+}, [isPlaying, focusRemaining]);
+
+
+useEffect(() => {
+  const savedNotes = localStorage.getItem("userNotes");
+  const savedTags = localStorage.getItem("userTags");
+
+  if (savedNotes || savedTags) {
+    setAppState(prev => ({
+      ...prev,
+      notes: savedNotes ? JSON.parse(savedNotes) : {},
+      tags: savedTags ? JSON.parse(savedTags) : {}
+    }));
+  }
+}, []);
+
+
+
 
 
 useEffect(() => {
@@ -387,6 +536,13 @@ useEffect(() => {
 
 
 
+useEffect(() => {
+  if (appState.coins === 0) {
+    setShowZeroCoinsPopup(true);
+  }
+}, [appState.coins]);
+
+
 
 
   // Initialize YT player when videoId is set OR set up local video listeners
@@ -399,7 +555,10 @@ useEffect(() => {
     setSessionViewsTaken(0);
     setEarnedThisSessionCoins(false);
     setHasPlaybackStarted(false);
-    setNoteText(appState.notes?.[videoId || localVideoFile?.name] || "");
+  const currentVideoKey = videoId || localVideoFile?.name;
+setNoteText(appState.notes?.[currentVideoKey] || "");
+setTagText(appState.tags?.[currentVideoKey] || "");
+
     setTagText("");
     stopPolling();
 
@@ -500,66 +659,85 @@ useEffect(() => {
 
     return () => stopPolling();
   }, [videoId, localVideoObjectUrl, focusDuration, hasPlaybackStarted, isFocusTimerPending]);
+useEffect(() => {
+  let stopCamera = null; // <-- keep reference to cleanup
 
-  // NEW useEffect for Camera and Socket Integration
-  useEffect(() => {
-    if (!showCameraAnalysis) {
-      if (socketRef.current) {
-        socketRef.current.disconnect();
-        socketRef.current = null;
-      }
-      if (cameraVideoRef.current && cameraVideoRef.current.srcObject) {
-        cameraVideoRef.current.srcObject.getTracks().forEach(track => track.stop());
-        cameraVideoRef.current.srcObject = null;
-      }
-      return;
+  if (!showCameraAnalysis) {
+    if (socketRef.current) {
+      socketRef.current.disconnect();
+      socketRef.current = null;
     }
+    if (cameraVideoRef.current && cameraVideoRef.current.srcObject) {
+      cameraVideoRef.current.srcObject.getTracks().forEach(track => track.stop());
+      cameraVideoRef.current.srcObject = null;
+    }
+    return;
+  }
 
-    const socket = io("http://localhost:6000");
-    socketRef.current = socket;
+  const socket = io("http://localhost:6000");
+  socketRef.current = socket;
 
-    socket.on("analysis", (data) => {
-      setCameraAnalysisResult(data);
-    });
+  socket.on("analysis", (data) => {
+    setCameraAnalysisResult(data);
+  });
 
-    async function startCameraAndSendFrames() {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-        if (cameraVideoRef.current) {
-          cameraVideoRef.current.srcObject = stream;
-          cameraVideoRef.current.play();
+  async function startCameraAndSendFrames() {
+    try {
+      const constraints = {
+        video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
+        audio: false,
+      };
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      if (cameraVideoRef.current) {
+        cameraVideoRef.current.srcObject = stream;
+        await new Promise(resolve => {
+          cameraVideoRef.current.onloadedmetadata = () => {
+            cameraVideoRef.current.play().catch(err => console.error("Video play() error:", err));
+            resolve();
+          };
+        });
+      }
+
+      const canvas = cameraCanvasRef.current;
+      const ctx = canvas.getContext("2d");
+      const intervalId = setInterval(() => {
+        if (cameraVideoRef.current && cameraVideoRef.current.readyState >= 2 && stream.active) {
+          ctx.drawImage(cameraVideoRef.current, 0, 0, 320, 240);
+          const dataUrl = canvas.toDataURL("image/jpeg", 0.6);
+          socket.emit("frame", dataUrl.split(",")[1]);
         }
+      }, 1000);
 
-        const canvas = cameraCanvasRef.current;
-        const ctx = canvas.getContext("2d");
-
-        const intervalId = setInterval(() => {
-          if (cameraVideoRef.current && cameraVideoRef.current.readyState >= 2) {
-            ctx.drawImage(cameraVideoRef.current, 0, 0, 320, 240);
-            const dataUrl = canvas.toDataURL("image/jpeg", 0.6);
-            socket.emit("frame", dataUrl.split(",")[1]);
-          }
-        }, 1000);
-
-        return () => {
-          clearInterval(intervalId);
-          stream.getTracks().forEach(track => track.stop());
-        };
-
-      } catch (err) {
-        console.error("Error accessing camera: ", err);
-        setCameraAnalysisResult(JSON.stringify({ error: "Camera access denied or error." }));
+      // ✅ assign cleanup to variable
+      stopCamera = () => {
+        clearInterval(intervalId);
+        stream.getTracks().forEach(track => track.stop());
+      };
+    } catch (err) {
+      console.error("Error accessing camera:", err);
+      let msg = "";
+      if (err.name === "NotAllowedError") {
+        msg = "Camera permission denied. Please allow camera access.";
+      } else if (err.name === "NotFoundError") {
+        msg = "No camera found. Please connect a webcam.";
+      } else if (err.name === "NotReadableError") {
+        msg = "Camera is already in use by another app (Zoom, FaceTime).";
+      } else {
+        msg = err.message || "Unknown camera error.";
       }
+      setCameraAnalysisResult(JSON.stringify({ error: msg }));
     }
-    
-    startCameraAndSendFrames();
+  }
 
-    return () => {
-      if (socketRef.current) {
-        socketRef.current.disconnect();
-      }
-    };
-  }, [showCameraAnalysis]);
+  startCameraAndSendFrames();
+
+  // ✅ main cleanup
+  return () => {
+    if (stopCamera) stopCamera();
+    if (socketRef.current) socketRef.current.disconnect();
+  };
+}, [showCameraAnalysis]);
+
 
   // Polling logic
   const startPolling = () => {
@@ -654,10 +832,10 @@ useEffect(() => {
       }
 
       // ✅ Continue timer; don't reset watched seconds
-      if (sessionPlayedSeconds > 0 && !earnedThisSessionCoins) {
-        finalizeSession(false);
-      }
-      console.log("▶️ Timer continuing normally after tab switch");
+      // if (sessionPlayedSeconds > 0 && !earnedThisSessionCoins) {
+      //   finalizeSession(false);
+      // }
+      // console.log("▶️ Timer continuing normally after tab switch");
     }
 
     // ✅ Unlock next switch (after small delay)
@@ -683,7 +861,7 @@ const cleanupAfterSession = () => {
       playerRef.current.pauseVideo?.();
       playerRef.current = null;
     }
-    setSessionPlayedSeconds(0);
+    // setSessionPlayedSeconds(0);
     setSessionViewsTaken(0);
     console.log("🧹 Focus session cleaned up!");
   } catch (err) {
@@ -906,32 +1084,83 @@ useEffect(() => {
   };
 
 
-  const handleLoadContent = () => {
+//   const handleLoadContent = () => {
+//   if (!inputUrl && !localVideoFile) {
+//     alert("Please provide a video URL or upload a video file first!");
+//     return;
+//   }
+
+//   // Extract YouTube video ID safely
+//   if (inputUrl) {
+//     const match = inputUrl.match(
+//       /(?:v=|\/)([0-9A-Za-z_-]{11})(?:[?&]|$)/
+//     );
+
+//     if (match && match[1]) {
+//       setVideoId(match[1]);
+//       setLocalVideoFile(null);
+//       setShowTimerPopup(true); // reset local if YouTube chosen
+//     } else {
+//       alert("Invalid YouTube URL or ID!");
+//       return;
+//     }
+//   }
+
+//   // If a local video is selected
+//   if (localVideoFile) {
+//     setVideoId(null); 
+//       setShowTimerPopup(true);// reset YouTube if switching to local
+//   }
+// };
+
+
+
+const handleLoadContent = async () => {
+
+if (appState.coins === 0) {
+  setShowZeroCoinsPopup(true);
+  return;
+}
+
+
   if (!inputUrl && !localVideoFile) {
     alert("Please provide a video URL or upload a video file first!");
     return;
   }
 
-  // Extract YouTube video ID safely
+  // If YouTube URL given
   if (inputUrl) {
     const match = inputUrl.match(
       /(?:v=|\/)([0-9A-Za-z_-]{11})(?:[?&]|$)/
     );
 
-    if (match && match[1]) {
-      setVideoId(match[1]);
-      setLocalVideoFile(null);
-      setShowTimerPopup(true); // reset local if YouTube chosen
-    } else {
+    if (!match || !match[1]) {
       alert("Invalid YouTube URL or ID!");
       return;
     }
+
+    const id = match[1];
+
+    // 🔥 Study Check
+    const allowed = await isStudyVideo(id);
+    if (!allowed) {
+  setBlockedTitle("This video is not study related!");
+  setShowBlockedPopup(true);
+  playRestrictionSound();   // 🔔 ADD THIS LINE
+  return;
+}
+
+
+    setVideoId(id);
+    setLocalVideoFile(null);
+    setShowTimerPopup(true);
+    return;
   }
 
-  // If a local video is selected
+  // If local video chosen
   if (localVideoFile) {
-    setVideoId(null); 
-      setShowTimerPopup(true);// reset YouTube if switching to local
+    setVideoId(null);
+    setShowTimerPopup(true);
   }
 };
 
@@ -996,15 +1225,75 @@ const fetchWeeklyStats = async () => {
 
 
 
+// const handleStopSave = async () => {
+//   try {
+//     if (youtubePlayerInstance?.pauseVideo) youtubePlayerInstance.pauseVideo();
+//     else if (localVideoRef.current && !localVideoRef.current.paused)
+//       localVideoRef.current.pause();
+
+//     // 🚫 Prevent accidental empty entries
+//     if (!sessionPlayedSeconds || sessionPlayedSeconds < 5) {
+//       alert("⚠️ You must watch for at least 5 seconds to save a session!");
+//       return;
+//     }
+
+//     const token = localStorage.getItem("token");
+//     const watchedSeconds = Math.round(sessionPlayedSeconds);
+//     const totalTabSwitches = tabSwitches;
+
+//     console.log("🎬 Saving session:", { videoId, watchedSeconds, totalTabSwitches });
+
+//     const response = await fetch("/api/tracking/add-history", {
+//       method: "POST",
+//       headers: {
+//         "Content-Type": "application/json",
+//         Authorization: `Bearer ${token}`,
+//       },
+//       body: JSON.stringify({
+//         videoId,
+//         url: videoId
+//           ? `https://youtu.be/${videoId}`
+//           : localVideoFile?.name || "Local File",
+//         secondsWatched: watchedSeconds,
+//         tabSwitches: totalTabSwitches,
+//       }),
+//     });
+
+//     const data = await response.json();
+//     if (!response.ok) throw new Error(data.message || "Failed to save session");
+
+//     // ✅ Update frontend + localStorage
+//     setAppState((prev) => ({
+//       ...prev,
+//       history: data.history || prev.history,
+//     }));
+//     localStorage.setItem("userHistory", JSON.stringify(data.history));
+
+  
+
+
+//     // ✅ Immediately refresh weekly stats chart here 👇
+//     await fetchWeeklyStats();
+
+//     // ✅ Now finalize (after saving)
+//     finalizeSession(true);
+
+//     alert("✅ Session saved successfully!");
+//   } catch (error) {
+//     console.error("❌ Error saving session:", error);
+//   }
+// };
+
+
+
 const handleStopSave = async () => {
   try {
     if (youtubePlayerInstance?.pauseVideo) youtubePlayerInstance.pauseVideo();
     else if (localVideoRef.current && !localVideoRef.current.paused)
       localVideoRef.current.pause();
 
-    // 🚫 Prevent accidental empty entries
     if (!sessionPlayedSeconds || sessionPlayedSeconds < 5) {
-      alert("⚠️ You must watch for at least 5 seconds to save a session!");
+      alert("⚠️ Watch at least 5 seconds before saving!");
       return;
     }
 
@@ -1012,8 +1301,17 @@ const handleStopSave = async () => {
     const watchedSeconds = Math.round(sessionPlayedSeconds);
     const totalTabSwitches = tabSwitches;
 
-    console.log("🎬 Saving session:", { videoId, watchedSeconds, totalTabSwitches });
+    const currentVideoKey = videoId || localVideoFile?.name;
 
+    console.log("🎬 Saving session with notes & tag:", {
+      videoId,
+      watchedSeconds,
+      totalTabSwitches,
+      noteText,
+      tagText,
+    });
+
+    // ✅ Send ALL data including notes + tag in ONE request
     const response = await fetch("/api/tracking/add-history", {
       method: "POST",
       headers: {
@@ -1021,63 +1319,153 @@ const handleStopSave = async () => {
         Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify({
-        videoId,
+        videoId: currentVideoKey,
         url: videoId
           ? `https://youtu.be/${videoId}`
           : localVideoFile?.name || "Local File",
         secondsWatched: watchedSeconds,
         tabSwitches: totalTabSwitches,
+        note: noteText,
+        tag: tagText,
       }),
     });
 
     const data = await response.json();
-    if (!response.ok) throw new Error(data.message || "Failed to save session");
+    if (!data.success) throw new Error(data.message);
 
-    // ✅ Update frontend + localStorage
+    // Update UI history
     setAppState((prev) => ({
       ...prev,
-      history: data.history || prev.history,
+      history: data.history,
     }));
     localStorage.setItem("userHistory", JSON.stringify(data.history));
 
-  
-
-
-    // ✅ Immediately refresh weekly stats chart here 👇
+    // Update chart immediately
     await fetchWeeklyStats();
 
-    // ✅ Now finalize (after saving)
+    // Clean up session
     finalizeSession(true);
 
-    alert("✅ Session saved successfully!");
+    alert("✅ Session + Notes + Tag saved!");
   } catch (error) {
     console.error("❌ Error saving session:", error);
   }
 };
 
 
-const handleSaveNotes = () => {
-  if (!noteText.trim()) {
-    alert("Please write something before saving!");
-    return;
-  }
+const purchasePremium = () => {
+  const options = {
+    key: "rzp_test_123456789", // ← replace with your Razorpay test key
+    amount: 299 * 100,         // ₹299
+    currency: "INR",
+    name: "StudyBuddy Premium",
+    description: "Unlock premium coins and features",
 
-  const currentVideoKey = videoId || localVideoFile?.name;
-  if (!currentVideoKey) {
-    alert("No active video found!");
-    return;
-  }
+    handler: function (response) {
+      // SUCCESS → add coins
+      setAppState(prev => ({
+        ...prev,
+        coins: (prev.coins || 0) + 100,
+        premium: true,
+      }));
 
-  setAppState((prev) => ({
-    ...prev,
-    notes: {
-      ...prev.notes,
-      [currentVideoKey]: noteText,
+      localStorage.setItem("coins", (appState.coins || 0) + 100);
+      localStorage.setItem("premium", "true");
+
+      alert("🎉 Payment Successful! Premium Activated!");
+      setShowZeroCoinsPopup(false);
     },
-  }));
 
-  alert("Notes saved successfully!");
+    theme: { color: "#4f46e5" },
+  };
+
+  const rzp = new window.Razorpay(options);
+  rzp.open();
 };
+
+
+
+
+
+  // ⬇️ put handleSaveNotes here, inside component ⬇️
+  const handleSaveNotes = async () => {
+    if (!noteText.trim() && !tagText.trim()) {
+      alert("Please enter a note or tag before saving!");
+      return;
+    }
+
+    const currentVideoKey = videoId || localVideoFile?.name;
+    if (!currentVideoKey) {
+      alert("No active video found!");
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch("/api/tracking/save-note-tag", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: token ? `Bearer ${token}` : undefined,
+        },
+        credentials: "include",
+        body: JSON.stringify({
+          videoId: currentVideoKey,
+          noteText,
+          tagText,
+        }),
+      });
+
+      const data = await res.json();
+      if (!data.success) throw new Error(data.message || "Failed to save notes");
+
+      setAppState((prev) => ({
+        ...prev,
+        notes: { ...prev.notes, ...data.notes },
+        tags: { ...prev.tags, ...data.tags },
+        history: data.history || prev.history,
+      }));
+
+      localStorage.setItem(
+        "userNotes",
+        JSON.stringify({ ...appState.notes, ...data.notes })
+      );
+      localStorage.setItem(
+        "userTags",
+        JSON.stringify({ ...appState.tags, ...data.tags })
+      );
+
+      alert("✅ Notes & Tag saved successfully!");
+    } catch (err) {
+      console.error("❌ Error saving note/tag:", err);
+      alert("Failed to save note or tag.");
+    }
+  };
+
+
+
+// const handleSaveNotes = () => {
+//   if (!noteText.trim()) {
+//     alert("Please write something before saving!");
+//     return;
+//   }
+
+//   const currentVideoKey = videoId || localVideoFile?.name;
+//   if (!currentVideoKey) {
+//     alert("No active video found!");
+//     return;
+//   }
+
+//   setAppState((prev) => ({
+//     ...prev,
+//     notes: {
+//       ...prev.notes,
+//       [currentVideoKey]: noteText,
+//     },
+//   }));
+
+//   alert("Notes saved successfully!");
+// };
 
 const handleStartFocusTimer = () => {
   if (!focusMinutes || focusMinutes <= 0) {
@@ -1262,37 +1650,67 @@ const handleStartFocusTimer = () => {
               </p>
             </div>
           </div>
+        
         )}
 
+
+        {showBlockedPopup && (
+  <div style={blockedStyles.overlay}>
+    <div style={blockedStyles.popup}>
+      <h2 style={blockedStyles.title}>⚠️ Access Blocked</h2>
+      <p style={blockedStyles.message}>
+        {blockedTitle || "This video is not allowed because it is not study-related."}
+      </p>
+
+      <button
+        onClick={() => setShowBlockedPopup(false)}
+        style={blockedStyles.button}
+      >
+        Go Back
+      </button>
+    </div>
+  </div>
+)}
+
+
         {showZeroCoinsPopup && (
-          <div style={styles.popup}>
-            <div
-              style={{ ...styles.popupInner, border: "2px solid #ef4444" }}
-            >
-              <h3 style={{ ...styles.popupTitle, color: "#ef4444" }}>
-                Out of Coins!
-              </h3>
-              <p style={styles.popupText}>
-                Purchase Premium to continue watching.
-              </p>
-              <div style={{ marginTop: "16px" }}>
-                <button onClick={purchasePremium} style={styles.button}>
-                  Purchase (Add 100 🪙)
-                </button>
-                <button
-                  onClick={() => setShowZeroCoinsPopup(false)}
-                  style={{
-                    ...styles.button,
-                    ...styles.secondaryButton,
-                    marginLeft: 8,
-                  }}
-                >
-                  Close
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+  <div style={styles.popup}>
+    <div style={{ ...styles.popupInner, border: "2px solid #f59e0b" }}>
+      <h3 style={{ ...styles.popupTitle, color: "#d97706" }}>
+        ⚠️ You’re out of coins!
+      </h3>
+
+      <p style={styles.popupText}>
+        Upgrade to <strong>Premium</strong> to continue watching videos and using focus mode.
+      </p>
+
+      <div style={{
+        fontSize: "1.4em",
+        fontWeight: "700",
+        margin: "10px 0",
+        color: "#111",
+      }}>
+        💎 Premium – <span style={{ color: "#16a34a" }}>₹299</span>
+      </div>
+
+      <button
+        onClick={purchasePremium}
+        style={{
+          ...styles.button,
+          background: "#16a34a",
+          width: "100%",
+          padding: "12px",
+          fontSize: "1.1em",
+        }}
+      >
+        Unlock Premium for ₹299
+      </button>
+
+
+    </div>
+  </div>
+)}
+
 
         {/* Player Area */}
         <div style={styles.panel}>
@@ -1376,6 +1794,10 @@ const handleStartFocusTimer = () => {
                   </button>
                 </div>
               </div>
+
+                
+
+
             </>
           ) : (
             <div style={styles.placeholder}>
@@ -1383,6 +1805,43 @@ const handleStartFocusTimer = () => {
             </div>
           )}
         </div>
+
+
+        {/* ================== PERMANENT NOTES PANEL ================== */}
+{/* ================== STICKY NOTE STYLE NOTES PANEL ================== */}
+<div style={stickyNotes.panel}>
+
+  <h3 style={stickyNotes.heading}>
+    <span style={stickyNotes.icon}>📌</span> Saved Notes
+  </h3>
+
+  {!currentActiveVideoIdentifier ? (
+    <p style={stickyNotes.emptyMsg}>Load a video to view saved notes.</p>
+  ) : appState.notes?.[currentActiveVideoIdentifier] ? (
+    <div style={stickyNotes.stickyCard}>
+      <div style={stickyNotes.pin}></div>
+
+      <div style={stickyNotes.noteText}>
+        {appState.notes[currentActiveVideoIdentifier]}
+      </div>
+
+      {appState.tags?.[currentActiveVideoIdentifier] && (
+        <div style={stickyNotes.tag}>#{appState.tags[currentActiveVideoIdentifier]}</div>
+      )}
+
+      <div style={stickyNotes.date}>
+        Last updated:
+        <strong> {new Date().toLocaleString()}</strong>
+      </div>
+    </div>
+  ) : (
+    <p style={stickyNotes.emptyMsg}>No notes saved yet for this video. Add one! ✨</p>
+  )}
+
+</div>
+{/* ================================================================== */}
+
+
 
         {/* Stats & History */}
         <div style={styles.panel}>
@@ -1467,11 +1926,21 @@ const handleStartFocusTimer = () => {
         <p>
           <b>Date:</b> {new Date(h.watchedAt).toLocaleDateString()}
         </p>
+        {h.note && (
+  <p>
+    <b>Note:</b> {h.note}
+  </p>
+)}
+{h.tag && (
+  <p>
+    <b>Tag:</b> {h.tag}
+  </p>
+)}
+
       </div>
     ))
   )}
 </div>
-
 
 
 
@@ -1510,4 +1979,208 @@ const styles = {
   textarea: { width: '100%', minHeight: '80px', padding: '10px 14px', borderRadius: '8px', border: '1px solid #d1d5db', fontSize: '1em', resize: 'vertical' },
   placeholder: { display: 'flex', justifyContent: 'center', alignItems: 'center', height: '200px', background: '#f9fafb', borderRadius: '8px', color: '#6b7280' },
   tooltip: { background: '#fff', border: '1px solid #d1d5db', padding: '8px', borderRadius: '8px' },
+};
+
+
+const blockedStyles = {
+  overlay: {
+    position: "fixed",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    background: "rgba(0,0,0,0.45)",
+    backdropFilter: "blur(4px)",
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 9999,
+  },
+
+  popup: {
+    background: "rgba(255,255,255,0.95)",
+    padding: "24px",
+    width: "90%",
+    maxWidth: "380px",
+    borderRadius: "16px",
+    boxShadow: "0 8px 20px rgba(0,0,0,0.15)",
+    textAlign: "center",
+  },
+
+  title: {
+    fontSize: "1.5em",
+    fontWeight: "700",
+    color: "#dc2626",
+    marginBottom: "10px",
+  },
+
+  message: {
+    fontSize: "1em",
+    color: "#374151",
+    lineHeight: "1.5",
+    marginBottom: "20px",
+  },
+
+  button: {
+    padding: "10px 20px",
+    background: "#4f46e5",
+    color: "white",
+    borderRadius: "8px",
+    cursor: "pointer",
+    border: "none",
+    fontSize: "1em",
+    width: "100%",
+  },
+};
+
+
+const stylesNotes = {
+  panel: {
+    background: "linear-gradient(135deg, #ffffff 0%, #f3f4f6 100%)",
+    padding: "22px",
+    borderRadius: "16px",
+    border: "1px solid #e5e7eb",
+    boxShadow: "0 4px 18px rgba(0,0,0,0.05)",
+  },
+
+  heading: {
+    fontSize: "1.4rem",
+    fontWeight: "700",
+    marginBottom: "16px",
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    color: "#1f2937",
+  },
+
+  icon: {
+    fontSize: "1.4em",
+  },
+
+  emptyMsg: {
+    color: "#6b7280",
+    fontSize: "0.95em",
+    padding: "6px 0",
+  },
+
+  noteCard: {
+    padding: "18px",
+    borderRadius: "14px",
+    background: "rgba(255,255,255,0.65)",
+    backdropFilter: "blur(6px)",
+    border: "1px solid rgba(0,0,0,0.06)",
+    boxShadow: "0 6px 14px rgba(0,0,0,0.08)",
+  },
+
+  noteText: {
+    fontSize: "1rem",
+    color: "#111827",
+    lineHeight: "1.6",
+    marginBottom: "12px",
+    whiteSpace: "pre-wrap",
+  },
+
+  tag: {
+    display: "inline-block",
+    background: "#e0e7ff",
+    padding: "6px 12px",
+    borderRadius: "8px",
+    color: "#3730a3",
+    fontWeight: "600",
+    fontSize: "0.85rem",
+    marginBottom: "12px",
+    boxShadow: "0px 3px 8px rgba(88, 80, 255, 0.25)",
+  },
+
+  divider: {
+    height: "1px",
+    background: "#e5e7eb",
+    margin: "14px 0",
+  },
+
+  date: {
+    fontSize: "0.85rem",
+    color: "#6b7280",
+  },
+};
+
+const stickyNotes = {
+  panel: {
+    background: "#fff",
+    padding: "22px",
+    borderRadius: "16px",
+    border: "1px solid #e5e7eb",
+    boxShadow: "0 4px 18px rgba(0,0,0,0.05)",
+  },
+
+  heading: {
+    fontSize: "1.4rem",
+    fontWeight: "700",
+    marginBottom: "12px",
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    color: "#1f2937",
+  },
+
+  icon: {
+    fontSize: "1.4em",
+  },
+
+  emptyMsg: {
+    color: "#6b7280",
+    fontSize: "0.95em",
+    padding: "6px 0",
+  },
+
+  stickyCard: {
+    position: "relative",
+    background: "#fff8a8",
+    padding: "20px",
+    minHeight: "120px",
+    borderRadius: "10px",
+    fontFamily: "'Patrick Hand', cursive, sans-serif",
+    fontSize: "1.1rem",
+    color: "#374151",
+    lineHeight: "1.6",
+    whiteSpace: "pre-wrap",
+
+    // Sticky note shadow + tilt
+    boxShadow: "0 10px 18px rgba(0,0,0,0.12)",
+    transform: "rotate(-1.5deg)",
+  },
+
+  // Red pin on top center
+  pin: {
+    width: "18px",
+    height: "18px",
+    background: "#ef4444",
+    borderRadius: "50%",
+    position: "absolute",
+    top: "-8px",
+    left: "50%",
+    transform: "translateX(-50%)",
+    boxShadow: "0 3px 6px rgba(0,0,0,0.3)",
+  },
+
+  noteText: {
+    marginBottom: "12px",
+  },
+
+  tag: {
+    display: "inline-block",
+    background: "#fde047",
+    padding: "4px 10px",
+    borderRadius: "6px",
+    fontSize: "0.85rem",
+    fontWeight: "600",
+    boxShadow: "0 3px 6px rgba(0,0,0,0.15)",
+    marginBottom: "10px",
+  },
+
+  date: {
+    marginTop: "12px",
+    color: "#6b7280",
+    fontSize: "0.85rem",
+  },
 };

@@ -132,16 +132,38 @@ router.get("/stats", protect, async (req, res) => {
 });
 
 // 🪙 Fetch user coins by ID (for frontend coin sync)
-router.get("/coins/:userId", async (req, res) => {
+// router.get("/coins/:userId", async (req, res) => {
+//   try {
+//     const user = await User.findById(req.params.userId);
+//     if (!user) return res.status(404).json({ message: "User not found" });
+//     res.json({ coins: user.coins });
+//   } catch (err) {
+//     console.error("Error fetching coins:", err);
+//     res.status(500).json({ message: "Server error" });
+//   }
+// });
+
+
+// backend/routes/tracking.js (or controller)
+router.get("/coins/:id", async (req, res) => {
   try {
-    const user = await User.findById(req.params.userId);
-    if (!user) return res.status(404).json({ message: "User not found" });
-    res.json({ coins: user.coins });
+    const user = await User.findById(req.params.id);
+    if (!user)
+      return res.status(404).json({ success: false, message: "User not found" });
+
+    res.json({
+      success: true,
+      coins: user.coins,
+      streak: user.streak,
+      videosWatched: user.videosWatched || 0,
+      videosSwitched: user.videosSwitched || 0,
+    });
   } catch (err) {
     console.error("Error fetching coins:", err);
-    res.status(500).json({ message: "Server error" });
+    res.status(500).json({ success: false, message: err.message });
   }
 });
+
 
 
 // ✅ Add video watch history (keeps last 5 days)
@@ -306,6 +328,93 @@ router.get("/monthly-activity", protect, async (req, res) => {
     res.status(500).json({ success: false, message: err.message });
   }
 });
+
+
+// ✅ Save or update notes & tags for a specific video
+// ✅ Save or update notes & tags for a specific video
+router.post("/save-note-tag", protect, async (req, res) => {
+  try {
+    const { videoId, noteText, tagText } = req.body;
+    const user = req.user;
+
+    if (!user)
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    if (!videoId)
+      return res
+        .status(400)
+        .json({ success: false, message: "Missing videoId" });
+
+    // Ensure proper Map conversion (in case they were plain objects)
+    if (!(user.notes instanceof Map))
+      user.notes = new Map(Object.entries(user.notes || {}));
+    if (!(user.tags instanceof Map))
+      user.tags = new Map(Object.entries(user.tags || {}));
+
+    // ✅ Save note & tag to Maps
+    if (noteText !== undefined) user.notes.set(videoId, noteText);
+    if (tagText !== undefined) user.tags.set(videoId, tagText);
+
+    // ✅ Update existing history entry (instead of adding new one)
+    const existing = user.history.find((h) => h.videoId === videoId);
+    if (existing) {
+      if (noteText !== undefined) existing.note = noteText;
+      if (tagText !== undefined) existing.tag = tagText;
+    } else {
+      // If no entry found (edge case), add one cleanly
+      user.history.unshift({
+        videoId,
+        url: `https://youtu.be/${videoId}`,
+        secondsWatched: 0,
+        tabSwitches: 0,
+        watchedAt: new Date(),
+        note: noteText || "",
+        tag: tagText || "",
+      });
+    }
+
+    await user.save();
+
+    // Return clean objects for frontend
+    res.json({
+      success: true,
+      message: "Notes and tags saved successfully!",
+      notes: Object.fromEntries(user.notes),
+      tags: Object.fromEntries(user.tags),
+      history: user.history.slice(0, 5),
+    });
+  } catch (err) {
+    console.error("❌ Error saving note/tag:", err);
+    res
+      .status(500)
+      .json({ success: false, message: err?.message || "Server error" });
+  }
+});
+
+
+
+// ✅ Fetch notes + tags
+router.get("/notes-tags", protect, async (req, res) => {
+  try {
+    const user = req.user;
+    if (!user) return res.status(404).json({ success: false, message: "User not found" });
+
+    // ✅ Convert Map fields to plain objects for frontend readability
+    const plainNotes = Object.fromEntries(user.notes || []);
+    const plainTags = Object.fromEntries(user.tags || []);
+
+    res.json({
+      success: true,
+      notes: plainNotes,
+      tags: plainTags,
+    });
+  } catch (err) {
+    console.error("⚠️ Error fetching notes/tags:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
 
 
 

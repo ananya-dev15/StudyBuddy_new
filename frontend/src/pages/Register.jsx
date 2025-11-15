@@ -46,8 +46,8 @@ const Register = () => {
       setAppState({ coins: data.user.coins || 50, streak: data.user.streak || 0, name: data.user.name, email: data.user.email, });
       
       // 🎉 Welcome bonus alert
-      if (data.user.coins === 50) {
-        alert("Welcome! You’ve received 50 bonus coins 🎊");
+      if (data.user.coins === 500) {
+        alert("Welcome! You’ve received 500 bonus coins 🎊");
       } else {
         alert("Register Successful");
       }

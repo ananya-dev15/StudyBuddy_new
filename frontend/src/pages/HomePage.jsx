@@ -4,6 +4,16 @@ import profileIcon from '../assets/profile_icon.png';
 import AssignmentCard from "../components/AssignmentCard";
 import VideoTracker from "../components/VideoTracker";
 import AuthModal from "../components/AuthModal"; // ✨ NEW: Import the modal
+import Leaderboard from "../components/Leaderboard";
+import Lottie from "lottie-react";
+import chatAnimation from "../assets/chatAnimation.json"; 
+import ankit from "../assets/ankit1.jpeg"
+import anshika from "../assets/anshika1.jpeg"
+import ananya from "../assets/ananya1.jpeg"
+import setu from "../assets/setu1.jpeg"
+
+
+
 
 // ------------------- Chatbot Component -------------------
 const Chatbot = () => {
@@ -209,7 +219,7 @@ const HomePage = () => {
             About Us
           </button>
           <Link to="/blogs" className="hover:text-pink-500 transition-colors duration-300">Blogs</Link>
-          <Link to="/contactus" className="hover:text-pink-500 transition-colors duration-300">Contact Us</Link>
+          <Link to="/contact" className="hover:text-pink-500 transition-colors duration-300">Contact Us</Link>
         </div>
 
         {/* Conditional Navbar with Logout Dropdown */}
@@ -292,7 +302,7 @@ const HomePage = () => {
             { icon: "🤖", title: "AI Chatbot", desc: "Instant help, Q&A, and motivation while studying.", link: "/chatbot" },
             { icon: "📊", title: "Analytics", desc: "Visualize your learning trends and stay consistent.", link: "/analytics" },
             { icon: "📝", title: "Assignments", desc: "Organize, track, and submit assignments on time.", link: "/assignments" },
-            { icon: "🔥", title: "Streaks", desc: "Maintain daily study streaks and boost motivation.", link: "/streaks" },
+            { icon: "🔥", title: "Leaderboard", desc: "Maintain daily study streaks and boost motivation.", link: "/leaderboard" },
           ].map((f, idx) => (
             <Link
               to={f.link}
@@ -392,42 +402,57 @@ const HomePage = () => {
         </div>
       </section>
 
-      {/* About Us Section */}
-      <section id="about" className="py-16 text-center bg-white/50 backdrop-blur-lg relative z-10">
-        <h2 className="text-3xl font-bold text-gray-900">ABOUT US</h2>
-        <p className="mt-3 text-gray-800 max-w-2xl mx-auto">
-          We are a passionate team dedicated to making self-learning more effective and engaging.  
-          Our mission is to provide students with the right tools, structure, and motivation 
-          to achieve their goals without distractions.
-        </p>
-        <div className="mt-10 grid gap-8 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 max-w-7xl mx-auto px-6">
-          <div className="bg-white rounded-xl shadow-lg p-6 hover:shadow-2xl transition">
-            <img src="https://via.placeholder.com/150" alt="Team Member" className="w-24 h-24 mx-auto rounded-full border-4 border-indigo-600 shadow-md"/>
-            <h3 className="mt-4 text-xl font-semibold text-gray-900">Ananya Srivastava</h3>
-            <p className="text-gray-600 text-sm">Founder & Developer</p>
-          </div>
-          <div className="bg-white rounded-xl shadow-lg p-6 hover:shadow-2xl transition">
-            <img src="https://via.placeholder.com/150" alt="Team Member" className="w-24 h-24 mx-auto rounded-full border-4 border-indigo-600 shadow-md"/>
-            <h3 className="mt-4 text-xl font-semibold text-gray-900">Anshika Jain</h3>
-            <p className="text-gray-600 text-sm">UI/UX Designer</p>
-          </div>
-          <div className="bg-white rounded-xl shadow-lg p-6 hover:shadow-2xl transition">
-            <img src="https://via.placeholder.com/150" alt="Team Member" className="w-24 h-24 mx-auto rounded-full border-4 border-indigo-600 shadow-md"/>
-            <h3 className="mt-4 text-xl font-semibold text-gray-900">Ankit Kumar</h3>
-            <p className="text-gray-600 text-sm">AI/ML Specialist</p>
-          </div>
-          <div className="bg-white rounded-xl shadow-lg p-6 hover:shadow-2xl transition">
-            <img src="https://via.placeholder.com/150" alt="Team Member" className="w-24 h-24 mx-auto rounded-full border-4 border-indigo-600 shadow-md"/>
-            <h3 className="mt-4 text-xl font-semibold text-gray-900">Setu Arya</h3>
-            <p className="text-gray-600 text-sm">Backend Engineer</p>
-          </div>
-          <div className="bg-white rounded-xl shadow-lg p-6 hover:shadow-2xl transition">
-            <img src="https://via.placeholder.com/150" alt="Team Member" className="w-24 h-24 mx-auto rounded-full border-4 border-indigo-600 shadow-md"/>
-            <h3 className="mt-4 text-xl font-semibold text-gray-900">Yash Jain</h3>
-            <p className="text-gray-600 text-sm">Content Strategist</p>
-          </div>
-        </div>
-      </section>
+     {/* About Us Section */}
+<section id="about" className="py-16 text-center bg-white/50 backdrop-blur-lg relative z-10">
+  <h2 className="text-3xl font-bold text-gray-900">ABOUT US</h2>
+  <p className="mt-3 text-gray-800 max-w-2xl mx-auto">
+    We are a passionate team dedicated to making self-learning more effective and engaging.
+    Our mission is to provide students with the right tools, structure, and motivation 
+    to achieve their goals without distractions.
+  </p>
+
+  <div className="mt-10 grid gap-8 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 max-w-7xl mx-auto px-6">
+    
+    <div className="bg-white rounded-xl shadow-lg p-6 hover:shadow-2xl transition">
+     <img
+  src={ananya}
+  alt="Team Member"
+  className="w-48 h-48 mx-auto rounded-full border-4 border-indigo-600 shadow-md object-cover"
+/>
+
+      <h3 className="mt-4 text-xl font-semibold text-gray-900">Ananya Srivastava</h3>
+      <p className="text-gray-600 text-sm">Backend Developer</p>
+    </div>
+
+    <div className="bg-white rounded-xl shadow-lg p-6 hover:shadow-2xl transition">
+      <img src={anshika} alt="Team Member"
+  className="w-48 h-48 mx-auto rounded-full border-4 border-indigo-600 shadow-md object-cover" />
+      <h3 className="mt-4 text-xl font-semibold text-gray-900">Anshika Jain</h3>
+      <p className="text-gray-600 text-sm">Frontend Designer</p>
+    </div>
+
+    <div className="bg-white rounded-xl shadow-lg p-6 hover:shadow-2xl transition">
+     <img 
+  src={ankit}
+  alt="Team Member"
+  className="w-48 h-48 mx-auto rounded-full border-4 border-indigo-600 shadow-md object-cover object-top"
+
+/>
+<h3 className="mt-4 text-xl font-semibold text-gray-900">Ankit Kumar</h3>
+      <p className="text-gray-600 text-sm">Ideation and Open CV</p>
+    </div>
+
+    <div className="bg-white rounded-xl shadow-lg p-6 hover:shadow-2xl transition">
+      <img src={setu} alt="Team Member"
+  className="w-48 h-48 mx-auto rounded-full border-4 border-indigo-600 shadow-md object-cover" />
+
+      <h3 className="mt-4 text-xl font-semibold text-gray-900">Setu Arya</h3>
+      <p className="text-gray-600 text-sm">Frontend Designer</p>
+    </div>
+
+  </div>
+</section>
+
 
       {/* Footer */}
       <footer className="bg-gray-900 text-gray-200 py-10 mt-auto border-t-4 border-gradient-to-r from-purple-700 to-indigo-700 relative z-10">
@@ -470,31 +495,46 @@ const HomePage = () => {
       {/* Floating Chat Icon */}
     <div className="fixed bottom-5 right-5 z-50 flex flex-col items-end">
   {chatOpen && (
-    <div className="mb-2 w-80 h-96 bg-white shadow-2xl rounded-xl overflow-hidden flex flex-col">
-      <div className="bg-indigo-700 text-white p-3 font-semibold flex justify-between items-center">
-        Chat with AI
-        <button
-          onClick={() => setChatOpen(false)}
-          className="ml-2 font-bold text-lg leading-none"
-        >
-          ✕
-        </button>
-      </div>
-      {/* Embed Streamlit app in iframe */}
-      <iframe
-        src="http://localhost:8501"  // ✅ Run streamlit run streamlit_app.py --server.port 8501
-        className="flex-1"
-        style={{ border: "none" }}
-        title="StudyBuddy"
-      />
-    </div>
+   <div className="mb-2 w-[550px] h-[520px] bg-white shadow-2xl rounded-xl overflow-hidden flex flex-col">
+  <div className="bg-indigo-700 text-white p-4 font-semibold flex justify-between items-center text-lg">
+    Chat with AI
+    <button
+      onClick={() => setChatOpen(false)}
+      className="ml-2 font-bold text-xl leading-none"
+    >
+      ✕
+    </button>
+  </div>
+
+  <iframe
+    src="http://localhost:8501"
+    className="flex-1"
+    style={{ border: "none" }}
+    title="StudyBuddy"
+  />
+</div>
+
   )}
-  <button
+  {/* <button
     onClick={handleChatClick} // ✨ MODIFIED: Use new handler
     className="w-16 h-16 rounded-full bg-indigo-700 shadow-xl flex items-center justify-center text-white text-2xl hover:bg-indigo-800 transition-colors"
   >
     💬
-  </button>
+  </button> */}
+
+<div 
+  onClick={handleChatClick} 
+  className="cursor-pointer "
+>
+  <Lottie
+    animationData={chatAnimation}
+    loop={true}
+    className="w-32 h-[130px]"
+  />
+</div>
+
+
+
 </div>
 
       {/* ✨ NEW: Render the modal component */}

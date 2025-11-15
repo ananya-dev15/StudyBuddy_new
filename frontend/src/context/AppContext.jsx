@@ -9,7 +9,12 @@ export const AppProvider = ({ children }) => {
     coins: 0,
     streak: 0,
     history: [],
+    notes: JSON.parse(localStorage.getItem("userNotes")) || {},
+    tags: JSON.parse(localStorage.getItem("userTags")) || {},
+    videosWatched: 0,   // ✅ new
+    videosSwitched: 0,  // ✅ new
   });
+
 
   // 🪙 Fetch latest user coins + streak from backend (if logged in)
   useEffect(() => {
@@ -27,6 +32,8 @@ export const AppProvider = ({ children }) => {
           user: storedUser,
           coins: data.coins || prev.coins,
           streak: data.streak || prev.streak,
+          videosWatched: data.videosWatched ?? prev.videosWatched,
+  videosSwitched: data.videosSwitched ?? prev.videosSwitched,
         }));
 
         // update localStorage coins
@@ -64,6 +71,36 @@ export const AppProvider = ({ children }) => {
     };
 
     fetchHistory();
+  }, []);
+
+   // 📝 Fetch saved notes + tags once on load
+  useEffect(() => {
+    const fetchNotesTags = async () => {
+      const token = localStorage.getItem("token");
+      if (!token) return;
+
+      try {
+        const res = await fetch("/api/tracking/notes-tags", {
+          headers: { Authorization: `Bearer ${token}` },
+          credentials: "include",
+        });
+        const data = await res.json();
+        if (data.success) {
+          setAppState((prev) => ({
+            ...prev,
+            notes: data.notes || {},
+            tags: data.tags || {},
+          }));
+
+          localStorage.setItem("userNotes", JSON.stringify(data.notes || {}));
+          localStorage.setItem("userTags", JSON.stringify(data.tags || {}));
+        }
+      } catch (err) {
+        console.error("⚠️ Error fetching notes/tags:", err);
+      }
+    };
+
+    fetchNotesTags();
   }, []);
 
 

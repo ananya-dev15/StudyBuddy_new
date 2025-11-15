@@ -9,6 +9,9 @@ import ChatBot from "./components/ChatBot";
 import AssignmentCard from "./components/AssignmentCard";
 import Blog from "./components/blogs";
 import AuthModal from "./components/AuthModal";
+import Leaderboard from "./components/Leaderboard";
+import Analytics from "./components/Analytics";
+import Contact from "./components/contact";
 
 
   
@@ -27,7 +30,9 @@ function App() {
         <Route path="/assignments" element={<AssignmentCard/>} />
         <Route path="/blogs" element={<Blog />} />
         <Route path="/authmodal" element={<AuthModal />} />
-        
+        <Route path="/leaderboard" element={<Leaderboard/>} />
+        <Route path="/analytics" element={<Analytics/>} />
+           <Route path="/contact" element={<Contact/>} />
       </Routes>
     </BrowserRouter>
   );

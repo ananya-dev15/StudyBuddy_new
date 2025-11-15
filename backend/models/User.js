@@ -11,6 +11,9 @@ const historySchema = new mongoose.Schema(
     watchedAt: { type: Date, default: Date.now },
     secondsWatched: { type: Number, default: 0 },
     tabSwitches: { type: Number, default: 0 },
+
+     note: { type: String, default: "" },
+    tag: { type: String, default: "" },
   },
   { _id: false }
 );
@@ -39,6 +42,10 @@ const userSchema = new mongoose.Schema(
 
     // --- NEW FIELD: 5-Day History ---
     history: [historySchema],
+     // ✅ NEW FIELD: Persistent Notes
+    // Key = videoId or filename, Value = note text
+    notes: { type: Map, of: String, default: new Map() },
+    tags: { type: Map, of: String, default: new Map() },
   },
   { timestamps: true }
 );

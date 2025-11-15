@@ -35,7 +35,7 @@ export const signup = async (req, res) => {
     const user = await User.create({
       ...req.body,
       password: hashedPassword,
-      coins: 50,
+      coins: 500,
       videosWatched: 0,
       videosSwitched: 0,
     });
