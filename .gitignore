@@ -21,3 +21,20 @@ yarn-error.log*
 .vscode/
 .idea/
 .DS_Store
+
+# Ignore Python venv
+venv/
+frontend/venv/
+*/venv/
+
+# Ignore Node Modules
+node_modules/
+
+# Ignore Python cache
+__pycache__/
+
+# Ignore environment variables
+.env
+
+# Ignore model weights
+*.pt
