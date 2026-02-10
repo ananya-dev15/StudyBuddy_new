@@ -5,9 +5,16 @@ import cors from "cors";
 import { createServer } from "http";
 import { Server } from "socket.io";
 import authRoutes from "./routes/authRoutes.js";
-import { setupDetectionSocket } from "./routes/detectionRoutes.js"; // Import router and socket setup
+
 import connectDB from "./config/db.js";
 import trackingRoutes from "./routes/trackingRoutes.js";
+import detectorRoutes from "./routes/detectorRoutes.js";
+import path from "path";
+import reportRoutes from "./routes/reportRoutes.js";
+import { fileURLToPath } from "url";
+
+
+
 
 
 
@@ -15,6 +22,8 @@ import trackingRoutes from "./routes/trackingRoutes.js";
 dotenv.config();
 
 const app = express();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const httpServer = createServer(app); // Create an HTTP server
 const io = new Server(httpServer, {
@@ -38,6 +47,15 @@ app.use("/api/tracking", trackingRoutes);
 // Routes
 app.use("/api/auth", authRoutes);
 
+app.use("/api/detector", detectorRoutes);
+// app.use("/api/detector", detectorControlRoutes);
+app.use("/api/reports", reportRoutes);
+
+app.use(
+  "/uploads",
+  express.static(path.join(process.cwd(), "uploads"))
+);
+
 // Connect DB and start server
 const PORT = process.env.PORT || 6000;
 
@@ -48,7 +66,7 @@ const startServer = async () => {
 
     // === ADD THIS LINE HERE ===
     // This activates the socket logic from your routes file.
-    setupDetectionSocket(io);
+    
 
     httpServer.listen(PORT, () => {
       console.log(`✅ Server running on http://localhost:${PORT}`);

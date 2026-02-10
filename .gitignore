@@ -38,3 +38,8 @@ __pycache__/
 
 # Ignore model weights
 *.pt
+
+
+backend/detector/venv/
+backend/detector/focus_logs/
+backend/detector/__pycache__/

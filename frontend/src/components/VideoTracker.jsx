@@ -1,5 +1,11 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useAppContext } from "../context/AppContext";
+// import { FaceMesh } from "@mediapipe/face_mesh";
+// import { Camera } from "@mediapipe/camera_utils";
+import { io } from "socket.io-client";
+
+
+
 
 
 import {
@@ -11,7 +17,8 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
-import { io } from "socket.io-client";
+// import { io } from "socket.io-client";
+
 
 // --- LOCAL STORAGE & HELPER FUNCTIONS ---
 
@@ -66,7 +73,7 @@ function extractYouTubeId(urlOrId) {
 const ALLOWED_KEYWORDS = [
   "study", "lecture", "tutorial", "math", "science",
   "coding", "programming", "react", "java", "ds algo",
-  "data structures", "education", "exam", "motivation"
+  "data structures", "education", "exam", "motivation","MySQL"
 ];
 
 
@@ -259,6 +266,8 @@ const [blockedTitle, setBlockedTitle] = useState("");
   const [youtubePlayerInstance, setYoutubePlayerInstance] = useState(null);
   const [earnedThisSessionCoins, setEarnedThisSessionCoins] = useState(false);
   const [showZeroCoinsPopup, setShowZeroCoinsPopup] = useState(false);
+  const [coinsLoaded, setCoinsLoaded] = useState(false);
+
 
   // State for starting timer on play
   const [focusDuration, setFocusDuration] = useState(null);
@@ -280,6 +289,48 @@ const [blockedTitle, setBlockedTitle] = useState("");
   const cameraVideoRef = useRef(null);
   const cameraCanvasRef = useRef(null);
   const socketRef = useRef(null);
+
+  // const [showWarning, setShowWarning] = useState(false);
+  // const [warningText, setWarningText] = useState("");
+
+
+//    const saveDetectionToBackend = async (payloadObj) => {
+//   try {
+//     await fetch("/api/detections/save", {
+//       method: "POST",
+//       headers: { "Content-Type": "application/json" },
+//       credentials: "include", // ⭐ cookie token ke liye must
+//       body: JSON.stringify(payloadObj),
+//     });
+//   } catch (err) {
+//     console.error("❌ Detection save failed:", err);
+//   }
+// };
+
+// const showTopWarning = (msg) => {
+//   setWarningText(msg);
+//   setShowWarning(true);
+
+//   setTimeout(() => {
+//     setShowWarning(false);
+//   }, 2500);
+// };
+
+const toggleDetector = async () => {
+  try {
+    if (!showCameraAnalysis) {
+      await fetch("/api/detector/start", { method: "POST" });
+    } else {
+      await fetch("/api/detector/stop", { method: "POST" });
+    }
+
+    setShowCameraAnalysis((prev) => !prev);
+  } catch (err) {
+    console.log("Detector toggle error:", err);
+  }
+};
+
+
 
   const [history, setHistory] = useState([]);
 
@@ -403,25 +454,51 @@ useEffect(() => {
 
 
 
+// useEffect(() => {
+// const fetchCoins = async () => {
+// const user = JSON.parse(localStorage.getItem("user"));
+// if (!user) return;
+
+//   try {
+//     const res = await fetch(`/api/tracking/coins/${user._id || user.id}`);
+//     if (!res.ok) throw new Error("Failed to fetch coins");
+//     const data = await res.json();
+
+//     setAppState((prev) => ({ ...prev, coins: data.coins }));
+//     localStorage.setItem("coins", data.coins);
+//   } catch (err) {
+//     console.error("Coin fetch error:", err);
+//   }
+// };
+
+// fetchCoins();
+// }, [setAppState]);
+
+
+
 useEffect(() => {
-const fetchCoins = async () => {
-const user = JSON.parse(localStorage.getItem("user"));
-if (!user) return;
+  const fetchCoins = async () => {
+    const user = JSON.parse(localStorage.getItem("user"));
+    if (!user) return;
 
-  try {
-    const res = await fetch(`/api/tracking/coins/${user._id || user.id}`);
-    if (!res.ok) throw new Error("Failed to fetch coins");
-    const data = await res.json();
+    try {
+      const res = await fetch(`/api/tracking/coins/${user._id || user.id}`);
+      if (!res.ok) throw new Error("Failed to fetch coins");
+      const data = await res.json();
 
-    setAppState((prev) => ({ ...prev, coins: data.coins }));
-    localStorage.setItem("coins", data.coins);
-  } catch (err) {
-    console.error("Coin fetch error:", err);
-  }
-};
+      setAppState((prev) => ({ ...prev, coins: data.coins }));
+      localStorage.setItem("coins", data.coins);
 
-fetchCoins();
+      setCoinsLoaded(true); // ✅ VERY IMPORTANT
+    } catch (err) {
+      console.error("Coin fetch error:", err);
+      setCoinsLoaded(true); // even on error, stop loader
+    }
+  };
+
+  fetchCoins();
 }, [setAppState]);
+
 
   // load YouTube IFrame API
   useEffect(() => {
@@ -537,10 +614,15 @@ useEffect(() => {
 
 
 useEffect(() => {
-  if (appState.coins === 0) {
+  const coins = Number(appState.coins);
+
+  if (!isNaN(coins) && coins <= 0) {
     setShowZeroCoinsPopup(true);
+  } else {
+    setShowZeroCoinsPopup(false);
   }
 }, [appState.coins]);
+
 
 
 
@@ -617,7 +699,9 @@ setTagText(appState.tags?.[currentVideoKey] || "");
         setIsPlaying(true);
         startPolling();
         if (isFocusTimerPending && !hasPlaybackStarted) {
-          setFocusRemaining(focusDuration);
+          setFocusRemaining(focusMinutes * 60);
+
+          //setFocusRemaining(focusDuration);
           setIsFocusTimerPending(false);
           setHasPlaybackStarted(true);
         }
@@ -659,84 +743,117 @@ setTagText(appState.tags?.[currentVideoKey] || "");
 
     return () => stopPolling();
   }, [videoId, localVideoObjectUrl, focusDuration, hasPlaybackStarted, isFocusTimerPending]);
-useEffect(() => {
-  let stopCamera = null; // <-- keep reference to cleanup
 
-  if (!showCameraAnalysis) {
-    if (socketRef.current) {
-      socketRef.current.disconnect();
-      socketRef.current = null;
-    }
-    if (cameraVideoRef.current && cameraVideoRef.current.srcObject) {
-      cameraVideoRef.current.srcObject.getTracks().forEach(track => track.stop());
-      cameraVideoRef.current.srcObject = null;
-    }
-    return;
-  }
 
-  const socket = io("http://localhost:6000");
-  socketRef.current = socket;
 
-  socket.on("analysis", (data) => {
-    setCameraAnalysisResult(data);
-  });
 
-  async function startCameraAndSendFrames() {
-    try {
-      const constraints = {
-        video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
-        audio: false,
-      };
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      if (cameraVideoRef.current) {
-        cameraVideoRef.current.srcObject = stream;
-        await new Promise(resolve => {
-          cameraVideoRef.current.onloadedmetadata = () => {
-            cameraVideoRef.current.play().catch(err => console.error("Video play() error:", err));
-            resolve();
-          };
-        });
-      }
 
-      const canvas = cameraCanvasRef.current;
-      const ctx = canvas.getContext("2d");
-      const intervalId = setInterval(() => {
-        if (cameraVideoRef.current && cameraVideoRef.current.readyState >= 2 && stream.active) {
-          ctx.drawImage(cameraVideoRef.current, 0, 0, 320, 240);
-          const dataUrl = canvas.toDataURL("image/jpeg", 0.6);
-          socket.emit("frame", dataUrl.split(",")[1]);
-        }
-      }, 1000);
+// useEffect(() => {
+//   if (!showCameraAnalysis) return;
 
-      // ✅ assign cleanup to variable
-      stopCamera = () => {
-        clearInterval(intervalId);
-        stream.getTracks().forEach(track => track.stop());
-      };
-    } catch (err) {
-      console.error("Error accessing camera:", err);
-      let msg = "";
-      if (err.name === "NotAllowedError") {
-        msg = "Camera permission denied. Please allow camera access.";
-      } else if (err.name === "NotFoundError") {
-        msg = "No camera found. Please connect a webcam.";
-      } else if (err.name === "NotReadableError") {
-        msg = "Camera is already in use by another app (Zoom, FaceTime).";
-      } else {
-        msg = err.message || "Unknown camera error.";
-      }
-      setCameraAnalysisResult(JSON.stringify({ error: msg }));
-    }
-  }
+//   let camera = null;
+//   let faceMesh = null;
 
-  startCameraAndSendFrames();
+//   // ✅ throttle (5 sec me 1 baar save)
+//   let lastSentTime = 0;
 
-  // ✅ main cleanup
-  return () => {
-    if (stopCamera) stopCamera();
-    if (socketRef.current) socketRef.current.disconnect();
-  };
-}, [showCameraAnalysis]);
+//   const startFaceMesh = async () => {
+//     try {
+//       faceMesh = new FaceMesh({
+//         locateFile: (file) =>
+//           `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`,
+//       });
+
+//       faceMesh.setOptions({
+//         maxNumFaces: 3, // ✅ multiple faces detect
+//         refineLandmarks: true,
+//         minDetectionConfidence: 0.6,
+//         minTrackingConfidence: 0.6,
+//       });
+
+//       faceMesh.onResults((results) => {
+//         const facesCount = results?.multiFaceLandmarks?.length || 0;
+
+//         let direction = "unknown";
+//         let focused = false;
+
+//         // ✅ 1 face = focused
+//         if (facesCount === 1) {
+//           focused = true;
+
+//           const lm = results.multiFaceLandmarks[0];
+//           const nose = lm[1];
+
+//           // Left/Right/Center detection
+//           if (nose.x < 0.42) direction = "left";
+//           else if (nose.x > 0.58) direction = "right";
+//           else direction = "center";
+//         }
+
+//         // 🚨 No face or multiple faces => not focused
+//         if (facesCount === 0 || facesCount > 1) {
+//           focused = false;
+//         }
+
+//         // ✅ payload (backend ke according)
+//         const payload = {
+//           focused,
+//           faces_count: facesCount,
+//           direction,
+//         };
+
+//         // UI update
+//         setCameraAnalysisResult(JSON.stringify(payload));
+
+//         // ================== ✅ WARNINGS ==================
+//         if (facesCount === 0) {
+//           showTopWarning("Face not detected! Please sit properly 👀");
+//         } else if (facesCount > 1) {
+//           showTopWarning("Multiple faces detected! Only you should be present 🚫");
+//         } else {
+//           // 1 face but looking away
+//           if (direction === "left" || direction === "right") {
+//             showTopWarning(`You are looking ${direction}. Focus on screen 📌`);
+//           }
+//         }
+//         // =================================================
+
+//         // ✅ backend save (5 sec me 1 baar)
+//         const now = Date.now();
+//         if (now - lastSentTime > 60000) {
+//           lastSentTime = now;
+//           saveDetectionToBackend(payload);
+//         }
+//       });
+
+//       // ✅ Start camera
+//       camera = new Camera(cameraVideoRef.current, {
+//         onFrame: async () => {
+//           if (cameraVideoRef.current) {
+//             await faceMesh.send({ image: cameraVideoRef.current });
+//           }
+//         },
+//         width: 640,
+//         height: 480,
+//       });
+
+//       camera.start();
+//     } catch (err) {
+//       console.error("FaceMesh error:", err);
+//       setCameraAnalysisResult(
+//         JSON.stringify({ error: err.message || "FaceMesh failed" })
+//       );
+//     }
+//   };
+
+//   startFaceMesh();
+
+//   return () => {
+//     if (camera) camera.stop();
+//     if (faceMesh) faceMesh.close();
+//   };
+// }, [showCameraAnalysis]);
+
 
 
   // Polling logic
@@ -781,64 +898,125 @@ useEffect(() => {
 // other hooks, states, and helper functions above...
 
 // ✅ Unified visibility handler — only deduct coins if focus timer is running
-// --- Deduct coins if focus timer is running ---
+// // --- Deduct coins if focus timer is running ---
+// useEffect(() => {
+//   let lastHiddenTime = 0;
+//   let tabSwitchTriggered = false; 
+//   let timeoutId = null;
+//   let lastSwitchTimestamp = 0; // 🧠 prevents backend double fire within same second
+
+
+
+
+//   const handleVisibilityChange = async () => {
+//     const now = Date.now();
+
+//     // ✅ Case: Tab hidden → Deduct once
+//    if (document.visibilityState === "hidden" && focusRemaining > 0 && !tabSwitchTriggered) {
+
+//       // Prevent double-trigger if called twice quickly
+//       if (now - lastSwitchTimestamp < 800) return; // 🔒 stops 2 backend calls
+//       lastSwitchTimestamp = now;
+
+//       tabSwitchTriggered = true; 
+//       lastHiddenTime = now;
+
+//       if (focusRemaining > 0) {
+//         const deducted = TAB_SWITCH_COST;
+
+//         try {
+//           // ✅ 1. Deduct coins (backend)
+//           await updateBackendCoins(deducted);
+
+//           // ✅ 2. Update frontend coins
+//           setAppState((prev) => {
+//             const newCoins = Math.max((prev.coins || 0) - deducted, 0);
+//             if (newCoins <= 0) setShowZeroCoinsPopup(true);
+//             return { ...prev, coins: newCoins };
+//           });
+
+//           // ✅ 3. Update backend tab switch (only once)
+//           try {
+//             await updateVideosSwitched(userId);
+//             console.log("📡 Backend tab switch +1 ✅");
+//           } catch (e) {
+//             console.error("⚠️ Failed backend update:", e);
+//           }
+
+//           // ✅ 4. Update frontend display (+1)
+//           setTabSwitches((prev) => prev + 1);
+//           console.log("📊 Local tab switch +1 ✅");
+
+//         } catch (e) {
+//           console.error("❌ Coin deduction failed:", e);
+//         }
+//       }
+
+//       // ✅ Continue timer; don't reset watched seconds
+//       // if (sessionPlayedSeconds > 0 && !earnedThisSessionCoins) {
+//       //   finalizeSession(false);
+//       // }
+//       // console.log("▶️ Timer continuing normally after tab switch");
+//     }
+
+//     // ✅ Unlock next switch (after small delay)
+//     if (document.visibilityState === "visible") {
+//       clearTimeout(timeoutId);
+//       timeoutId = setTimeout(() => {
+//         tabSwitchTriggered = false;
+//       }, 600);
+//     }
+//   };
+
+//   document.addEventListener("visibilitychange", handleVisibilityChange);
+//   return () => {
+//     document.removeEventListener("visibilitychange", handleVisibilityChange);
+//     clearTimeout(timeoutId);
+//   };
+// }, [isPlaying, focusRemaining, sessionPlayedSeconds, earnedThisSessionCoins, userId]);
+
+
+
 useEffect(() => {
-  let lastHiddenTime = 0;
-  let tabSwitchTriggered = false; 
+  let tabSwitchTriggered = false;
   let timeoutId = null;
-  let lastSwitchTimestamp = 0; // 🧠 prevents backend double fire within same second
+  let lastSwitchTimestamp = 0;
 
   const handleVisibilityChange = async () => {
     const now = Date.now();
 
-    // ✅ Case: Tab hidden → Deduct once
-    if (document.visibilityState === "hidden" && isPlaying && !tabSwitchTriggered) {
-      // Prevent double-trigger if called twice quickly
-      if (now - lastSwitchTimestamp < 800) return; // 🔒 stops 2 backend calls
+    // ✅ Tab switch penalty when video is playing (YouTube + Local)
+    if (
+      (document.visibilityState === "hidden" || document.hasFocus() === false) &&
+      isPlaying &&
+      !tabSwitchTriggered
+    ) {
+      if (now - lastSwitchTimestamp < 800) return;
       lastSwitchTimestamp = now;
 
-      tabSwitchTriggered = true; 
-      lastHiddenTime = now;
+      tabSwitchTriggered = true;
 
-      if (focusRemaining > 0) {
-        const deducted = TAB_SWITCH_COST;
+      const deducted = TAB_SWITCH_COST;
 
-        try {
-          // ✅ 1. Deduct coins (backend)
-          await updateBackendCoins(deducted);
+      try {
+        await updateBackendCoins(deducted);
 
-          // ✅ 2. Update frontend coins
-          setAppState((prev) => {
-            const newCoins = Math.max((prev.coins || 0) - deducted, 0);
-            if (newCoins <= 0) setShowZeroCoinsPopup(true);
-            return { ...prev, coins: newCoins };
-          });
+        setAppState((prev) => {
+          const newCoins = Math.max((prev.coins || 0) - deducted, 0);
+          if (newCoins <= 0) setShowZeroCoinsPopup(true);
+          return { ...prev, coins: newCoins };
+        });
 
-          // ✅ 3. Update backend tab switch (only once)
-          try {
-            await updateVideosSwitched(userId);
-            console.log("📡 Backend tab switch +1 ✅");
-          } catch (e) {
-            console.error("⚠️ Failed backend update:", e);
-          }
+        await updateVideosSwitched(userId);
 
-          // ✅ 4. Update frontend display (+1)
-          setTabSwitches((prev) => prev + 1);
-          console.log("📊 Local tab switch +1 ✅");
-
-        } catch (e) {
-          console.error("❌ Coin deduction failed:", e);
-        }
+        setTabSwitches((prev) => prev + 1);
+        console.log("📊 Tab switch +1 ✅");
+      } catch (e) {
+        console.error("❌ Coin deduction failed:", e);
       }
-
-      // ✅ Continue timer; don't reset watched seconds
-      // if (sessionPlayedSeconds > 0 && !earnedThisSessionCoins) {
-      //   finalizeSession(false);
-      // }
-      // console.log("▶️ Timer continuing normally after tab switch");
     }
 
-    // ✅ Unlock next switch (after small delay)
+    // unlock
     if (document.visibilityState === "visible") {
       clearTimeout(timeoutId);
       timeoutId = setTimeout(() => {
@@ -848,11 +1026,15 @@ useEffect(() => {
   };
 
   document.addEventListener("visibilitychange", handleVisibilityChange);
+  window.addEventListener("blur", handleVisibilityChange);
+
   return () => {
     document.removeEventListener("visibilitychange", handleVisibilityChange);
+    window.removeEventListener("blur", handleVisibilityChange);
     clearTimeout(timeoutId);
   };
-}, [isPlaying, focusRemaining, sessionPlayedSeconds, earnedThisSessionCoins, userId]);
+}, [isPlaying, userId]);
+
 
 
 const cleanupAfterSession = () => {
@@ -1068,56 +1250,39 @@ useEffect(() => {
 
   // --- THIS IS THE ONLY UPDATED PART ---
   const getAnalysisString = () => {
-    if (!cameraAnalysisResult) return "Waiting for analysis...";
-    try {
-      const result = JSON.parse(cameraAnalysisResult);
-      if (result.error) return `Error: ${result.error}`;
-      
-      let status = `Focused: ${result.focused ? "✅ Yes" : "❌ No"}\n`;
-      status += `Faces Detected: ${result.faces_count}\n`;
-      // Display the new phone detection status
-      status += `Phone Detected: ${result.phone_detected ? "📱 Yes" : "No"}`;
-      return status;
-    } catch (e) {
-      return `Waiting for valid data...`;
+  if (!cameraAnalysisResult) return "Waiting for analysis...";
+
+  try {
+    const result = JSON.parse(cameraAnalysisResult);
+
+    if (result.error) return `Error: ${result.error}`;
+
+    let status = `Focused: ${result.focused ? "✅ Yes" : "❌ No"}\n`;
+    status += `Faces Detected: ${result.faces_count}\n`;
+
+    if (result.faces_count === 0) {
+      status += "⚠️ No face detected";
+    } else if (result.faces_count > 1) {
+      status += "🚨 Multiple faces detected";
+    } else {
+      status += `Direction: ${result.direction}\n`;
+      if (result.direction === "left" || result.direction === "right") {
+        status += "⚠️ Please look at the screen";
+      }
     }
-  };
 
-
-//   const handleLoadContent = () => {
-//   if (!inputUrl && !localVideoFile) {
-//     alert("Please provide a video URL or upload a video file first!");
-//     return;
-//   }
-
-//   // Extract YouTube video ID safely
-//   if (inputUrl) {
-//     const match = inputUrl.match(
-//       /(?:v=|\/)([0-9A-Za-z_-]{11})(?:[?&]|$)/
-//     );
-
-//     if (match && match[1]) {
-//       setVideoId(match[1]);
-//       setLocalVideoFile(null);
-//       setShowTimerPopup(true); // reset local if YouTube chosen
-//     } else {
-//       alert("Invalid YouTube URL or ID!");
-//       return;
-//     }
-//   }
-
-//   // If a local video is selected
-//   if (localVideoFile) {
-//     setVideoId(null); 
-//       setShowTimerPopup(true);// reset YouTube if switching to local
-//   }
-// };
+    return status;
+  } catch (e) {
+    return "Waiting for valid data...";
+  }
+};
 
 
 
-const handleLoadContent = async () => {
 
-if (appState.coins === 0) {
+ const handleLoadContent = async () => {
+
+ if (appState.coins === 0) {
   setShowZeroCoinsPopup(true);
   return;
 }
@@ -1225,64 +1390,6 @@ const fetchWeeklyStats = async () => {
 
 
 
-// const handleStopSave = async () => {
-//   try {
-//     if (youtubePlayerInstance?.pauseVideo) youtubePlayerInstance.pauseVideo();
-//     else if (localVideoRef.current && !localVideoRef.current.paused)
-//       localVideoRef.current.pause();
-
-//     // 🚫 Prevent accidental empty entries
-//     if (!sessionPlayedSeconds || sessionPlayedSeconds < 5) {
-//       alert("⚠️ You must watch for at least 5 seconds to save a session!");
-//       return;
-//     }
-
-//     const token = localStorage.getItem("token");
-//     const watchedSeconds = Math.round(sessionPlayedSeconds);
-//     const totalTabSwitches = tabSwitches;
-
-//     console.log("🎬 Saving session:", { videoId, watchedSeconds, totalTabSwitches });
-
-//     const response = await fetch("/api/tracking/add-history", {
-//       method: "POST",
-//       headers: {
-//         "Content-Type": "application/json",
-//         Authorization: `Bearer ${token}`,
-//       },
-//       body: JSON.stringify({
-//         videoId,
-//         url: videoId
-//           ? `https://youtu.be/${videoId}`
-//           : localVideoFile?.name || "Local File",
-//         secondsWatched: watchedSeconds,
-//         tabSwitches: totalTabSwitches,
-//       }),
-//     });
-
-//     const data = await response.json();
-//     if (!response.ok) throw new Error(data.message || "Failed to save session");
-
-//     // ✅ Update frontend + localStorage
-//     setAppState((prev) => ({
-//       ...prev,
-//       history: data.history || prev.history,
-//     }));
-//     localStorage.setItem("userHistory", JSON.stringify(data.history));
-
-  
-
-
-//     // ✅ Immediately refresh weekly stats chart here 👇
-//     await fetchWeeklyStats();
-
-//     // ✅ Now finalize (after saving)
-//     finalizeSession(true);
-
-//     alert("✅ Session saved successfully!");
-//   } catch (error) {
-//     console.error("❌ Error saving session:", error);
-//   }
-// };
 
 
 
@@ -1386,7 +1493,6 @@ const purchasePremium = () => {
 
 
 
-
   // ⬇️ put handleSaveNotes here, inside component ⬇️
   const handleSaveNotes = async () => {
     if (!noteText.trim() && !tagText.trim()) {
@@ -1444,47 +1550,48 @@ const purchasePremium = () => {
 
 
 
-// const handleSaveNotes = () => {
-//   if (!noteText.trim()) {
-//     alert("Please write something before saving!");
+// const handleStartFocusTimer = () => {
+//   if (!focusMinutes || focusMinutes <= 0) {
+//     alert("Please enter a valid focus time!");
 //     return;
 //   }
 
-//   const currentVideoKey = videoId || localVideoFile?.name;
-//   if (!currentVideoKey) {
-//     alert("No active video found!");
-//     return;
-//   }
+//   // ⏱️ Start the focus timer
+//   setFocusRemaining(focusMinutes * 60);
 
-//   setAppState((prev) => ({
-//     ...prev,
-//     notes: {
-//       ...prev.notes,
-//       [currentVideoKey]: noteText,
-//     },
-//   }));
+//   // 🔒 Close the popup
+//   setShowTimerPopup(false);
 
-//   alert("Notes saved successfully!");
+//   // 🎬 Start video automatically after popup closes
+//   setTimeout(() => {
+//     if (playerRef.current && playerRef.current.playVideo) {
+//       playerRef.current.playVideo(); // for YouTube
+//     } else if (localVideoRef.current) {
+//       localVideoRef.current.play(); // for local file
+//     }
+//   }, 500);
 // };
 
+
 const handleStartFocusTimer = () => {
+  // ✅ Focus timer ONLY for YouTube
+  if (!videoId) {
+    alert("Focus timer only works for YouTube videos.");
+    setShowTimerPopup(false);
+    return;
+  }
+
   if (!focusMinutes || focusMinutes <= 0) {
     alert("Please enter a valid focus time!");
     return;
   }
 
-  // ⏱️ Start the focus timer
   setFocusRemaining(focusMinutes * 60);
-
-  // 🔒 Close the popup
   setShowTimerPopup(false);
 
-  // 🎬 Start video automatically after popup closes
   setTimeout(() => {
-    if (playerRef.current && playerRef.current.playVideo) {
-      playerRef.current.playVideo(); // for YouTube
-    } else if (localVideoRef.current) {
-      localVideoRef.current.play(); // for local file
+    if (youtubePlayerRef.current?.playVideo) {
+      youtubePlayerRef.current.playVideo();
     }
   }, 500);
 };
@@ -1492,18 +1599,22 @@ const handleStartFocusTimer = () => {
 
 
 
+
   return (
     <div style={styles.page}>
-      <div style={styles.container}>
-        <div style={styles.header}>
-          <h1 style={styles.title}>Study Video Tracker</h1>
-          <div style={styles.wallet}>
-            <span style={styles.statChip}>🪙 {appState.coins}</span>
-            <span style={styles.statChip}>
-              🔥 {appState.streak} day streak
-            </span>
-          </div>
+
+   
+
+    <div style={styles.container}>
+      <div style={styles.header}>
+        <h1 style={styles.title}>Study Video Tracker</h1>
+        <div style={styles.wallet}>
+          <span style={styles.statChip}>🪙 {appState.coins}</span>
+          <span style={styles.statChip}>
+            🔥 {appState.streak} day streak
+          </span>
         </div>
+      </div>
 
         {/* Input + Load */}
         <div style={styles.panel}>
@@ -1556,13 +1667,14 @@ const handleStartFocusTimer = () => {
           </div>
         </div>
         
-        {/* NEW PANEL FOR CAMERA ANALYSIS */}
+        {/* NEW PANEL FOR CAMERA ANALYSIS
         <div style={styles.panel}>
           <h3 style={styles.sectionTitle}>
             👁️ Live Focus & Face Detection (OpenCV)
           </h3>
           <button
-            onClick={() => setShowCameraAnalysis(prev => !prev)}
+          onClick={toggleDetector}
+
             style={{ ...styles.button, marginBottom: '16px' }}
           >
             {showCameraAnalysis ? "Stop Camera Analysis" : "Start Camera Analysis"}
@@ -1590,9 +1702,87 @@ const handleStartFocusTimer = () => {
               }}>
                 {getAnalysisString()}
               </pre>
+
+                 <div style={{ marginTop: "20px" }}>
+      <h3>📊 Focus Dashboard</h3>
+
+      <iframe
+        src="http://localhost:8501"
+        style={{
+          width: "100%",
+          height: "400px",
+          border: "none",
+          borderRadius: "12px",
+        }}
+      />
+      </div>
             </div>
           )}
-        </div>
+        </div> */}
+
+
+
+        {/* NEW PANEL FOR CAMERA ANALYSIS */}
+<div style={styles.panel}>
+  <h3 style={styles.sectionTitle}>
+    👁️ Live Focus & Face Detection (OpenCV)
+  </h3>
+
+  <button
+    onClick={toggleDetector}
+    style={{ ...styles.button, marginBottom: "16px" }}
+  >
+    {showCameraAnalysis ? "Stop Camera Analysis" : "Start Camera Analysis"}
+  </button>
+
+  {showCameraAnalysis && (
+    <div>
+      <h4 style={{ marginBottom: "10px" }}>
+        📷 Live Camera (Face + Phone Detection)
+      </h4>
+
+      <img
+        src="http://localhost:5001/video_feed"
+        alt="Live Detector Feed"
+        style={{
+          width: "100%",
+          maxWidth: "520px",
+          borderRadius: "12px",
+          border: "1px solid #ddd",
+          marginBottom: "20px",
+        }}
+      />
+
+      {/* <img
+     src={`http://localhost:5001/video_feed?ts=${Date.now()}`}
+     alt="Live Detector Feed"
+     style={{
+    width: "100%",
+    maxWidth: "520px",
+    borderRadius: "12px",
+    border: "1px solid #ddd",
+    marginBottom: "20px",
+    }}
+  /> */}
+
+
+      <div style={{ marginTop: "20px" }}>
+        <h3>📊 Focus Dashboard</h3>
+
+        <iframe
+          src="http://localhost:8501"
+          style={{
+            width: "100%",
+            height: "400px",
+            border: "none",
+            borderRadius: "12px",
+          }}
+        />
+      </div>
+    </div>
+  )}
+</div>
+
 
 
         
@@ -1673,7 +1863,7 @@ const handleStartFocusTimer = () => {
 )}
 
 
-        {showZeroCoinsPopup && (
+        {coinsLoaded && appState.coins === 0 && (
   <div style={styles.popup}>
     <div style={{ ...styles.popupInner, border: "2px solid #f59e0b" }}>
       <h3 style={{ ...styles.popupTitle, color: "#d97706" }}>
@@ -1952,8 +2142,9 @@ const handleStartFocusTimer = () => {
 
 // Basic styles to make the component runnable
 const styles = {
-  page: { background: '#f3f4f6', minHeight: '100vh', padding: '24px', fontFamily: 'sans-serif' },
-  container: { maxWidth: '800px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '24px' },
+
+  page: { background: '#f3f4f6',  width: '100vw', minHeight: '100vh', padding: '24px', boxSizing: 'border-box', fontFamily: 'sans-serif' },
+  container: { width: '100%', maxWidth: '100%', margin: '0', display: 'flex', flexDirection: 'column', gap: '24px' },
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
   title: { fontSize: '2em', color: '#111827', margin: 0 },
   wallet: { display: 'flex', gap: '12px' },
@@ -1971,14 +2162,39 @@ const styles = {
   popupText: { color: '#4b5563', lineHeight: 1.5, marginTop: '16px' },
   smallBtn: { padding: '6px 12px', borderRadius: '6px', border: 'none', color: 'white', cursor: 'pointer' },
   focusBar: { background: '#dbeafe', color: '#1e40af', padding: '12px', borderRadius: '8px', marginBottom: '16px', textAlign: 'center', fontWeight: '500' },
-  player: { position: 'relative', width: '100%', aspectRatio: '16/9', background: '#000' },
+  player: { position: 'relative', width: '100%',  height: '70vh', background: '#000' },
   playerMax: { position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', zIndex: 200, background: '#000' },
   toggleMaxMinButton: { position: 'absolute', bottom: '10px', right: '10px', zIndex: 210, background: 'rgba(0,0,0,0.6)', color: 'white', border: 'none', padding: '8px 12px', borderRadius: '6px', cursor: 'pointer' },
   controlsAndStats: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px' },
   statsText: { display: 'flex', gap: '24px', color: '#4b5563' },
-  textarea: { width: '100%', minHeight: '80px', padding: '10px 14px', borderRadius: '8px', border: '1px solid #d1d5db', fontSize: '1em', resize: 'vertical' },
+  textarea: {
+  width: '100%',
+  height: '200px',          // ✅ fixed bigger height
+  padding: '14px 16px',
+  borderRadius: '10px',
+  border: '1px solid #d1d5db',
+  fontSize: '1.05em',
+  resize: 'none',           // ✅ size fixed rahe
+  overflowY: 'auto',        // ✅ andar scroll
+  lineHeight: '1.6',
+},
+
   placeholder: { display: 'flex', justifyContent: 'center', alignItems: 'center', height: '200px', background: '#f9fafb', borderRadius: '8px', color: '#6b7280' },
   tooltip: { background: '#fff', border: '1px solid #d1d5db', padding: '8px', borderRadius: '8px' },
+  warningBanner: {
+  position: "fixed",
+  top: 12,
+  left: "50%",
+  transform: "translateX(-50%)",
+  background: "#111827",
+  color: "white",
+  padding: "10px 16px",
+  borderRadius: "12px",
+  fontWeight: "600",
+  zIndex: 99999,
+  boxShadow: "0 8px 20px rgba(0,0,0,0.25)",
+},
+
 };
 
 
@@ -2134,21 +2350,26 @@ const stickyNotes = {
   },
 
   stickyCard: {
-    position: "relative",
-    background: "#fff8a8",
-    padding: "20px",
-    minHeight: "120px",
-    borderRadius: "10px",
-    fontFamily: "'Patrick Hand', cursive, sans-serif",
-    fontSize: "1.1rem",
-    color: "#374151",
-    lineHeight: "1.6",
-    whiteSpace: "pre-wrap",
+  position: "relative",
+  background: "#fff8a8",
+  padding: "20px",
+  height: "600px",          // ✅ fixed height
+  width: "100%",
+  borderRadius: "10px",
+  fontFamily: "'Patrick Hand', cursive, sans-serif",
+  fontSize: "1.1rem",
+  color: "#374151",
+  lineHeight: "1.6",
 
-    // Sticky note shadow + tilt
-    boxShadow: "0 10px 18px rgba(0,0,0,0.12)",
-    transform: "rotate(-1.5deg)",
-  },
+  // Scrollable content
+  overflowY: "auto",        // ✅ scroll inside
+  overflowX: "hidden",
+
+  // Sticky note shadow + tilt
+  boxShadow: "0 10px 18px rgba(0,0,0,0.12)",
+  transform: "rotate(-1.5deg)",
+},
+
 
   // Red pin on top center
   pin: {
