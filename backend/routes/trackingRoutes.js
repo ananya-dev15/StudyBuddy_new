@@ -2,9 +2,18 @@
 import express from "express";
 import User from "../models/User.js";
 import protect from "../middlewares/authMiddleware.js";
- // ✅ use JWT middleware
+// ✅ use JWT middleware
 
 const router = express.Router();
+
+// ✅ Helper: Get local date string in YYYY-MM-DD format (respects timezone)
+const getLocalDateString = (date = new Date()) => {
+  const d = new Date(date);
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
 
 // Increment coins (userId comes from token)
 router.post("/coins", protect, async (req, res) => {
@@ -28,32 +37,54 @@ router.post("/videos-watched", protect, async (req, res) => {
     const user = req.user;
     if (!user) return res.status(404).json({ message: "User not found" });
 
-    // Get today & last watched date
-    const today = new Date();
-    const todayDate = today.toDateString();
-    const lastWatchedDate = user.lastDayWatched ? new Date(user.lastDayWatched).toDateString() : null;
+    // Allow client to provide their local date (YYYY-MM-DD). If provided, use it
+    // so streak calculations reflect the user's local calendar day.
+    const clientDate = req.body?.lastDayWatched;
+    const today = clientDate && /^\d{4}-\d{2}-\d{2}$/.test(clientDate) ? clientDate : getLocalDateString();
+
+    // Use stored lastDayWatched if available (assumed stored as YYYY-MM-DD), else null
+    const lastWatchedDate = user.lastDayWatched ? String(user.lastDayWatched) : null;
 
     // ✅ Increment total videos watched
     user.videosWatched = (user.videosWatched || 0) + 1;
 
-    // ✅ Streak logic
+
+    // ✅ Streak logic using YYYY-MM-DD dates (robust against timezone differences)
+    const parseYMD = (s) => {
+      if (!s) return null;
+      const parts = s.split("-");
+      if (parts.length !== 3) return null;
+      const y = parseInt(parts[0], 10);
+      const m = parseInt(parts[1], 10) - 1;
+      const d = parseInt(parts[2], 10);
+      return Date.UTC(y, m, d);
+    };
+
     if (!lastWatchedDate) {
       // first time
       user.streak = 1;
-    } else if (lastWatchedDate === todayDate) {
-      // same day → streak stays same
+    } else if (lastWatchedDate === today) {
+      // same calendar day (in user's local date) — do nothing
     } else {
-      const diffDays = Math.floor((today - new Date(user.lastDayWatched)) / (1000 * 60 * 60 * 24));
-      if (diffDays === 1) {
-        // watched next day → increment streak
-        user.streak = (user.streak || 0) + 1;
+      const lastUTC = parseYMD(lastWatchedDate);
+      const todayUTC = parseYMD(today);
+      if (lastUTC == null || todayUTC == null) {
+        user.streak = 1; // fallback
       } else {
-        // missed one or more days → reset streak
-        user.streak = 1;
+        const diffDays = Math.round((todayUTC - lastUTC) / (1000 * 60 * 60 * 24));
+        if (diffDays === 1) {
+          // watched next day → increment streak
+          user.streak = (user.streak || 0) + 1;
+        } else if (diffDays > 1) {
+          // missed one or more days → reset streak
+          user.streak = 1;
+        } else {
+          // negative or zero difference — treat as same day
+        }
       }
     }
 
-    // ✅ Update last watched date
+    // ✅ Persist the user's last watched date as the user's local YYYY-MM-DD
     user.lastDayWatched = today;
 
     // ✅ Save changes
@@ -217,15 +248,14 @@ router.post("/add-history", protect, async (req, res) => {
       url,
       secondsWatched: Math.round(secondsWatched),
       tabSwitches: tabSwitches || 0,
-      watchedAt: new Date(),
+      watchedAt: getLocalDateString(), // ✅ Use local date string (YYYY-MM-DD)
     };
 
     // ✅ Keep full history in DB
     user.history.unshift(newEntry);
     await user.save();
 
-    const latestFive = user.history.slice(0, 5);
-    res.json({ success: true, history: latestFive });
+    res.json({ success: true, history: user.history });
   } catch (err) {
     console.error("❌ Error adding history:", err);
     res.status(500).json({ success: false, message: err.message });
@@ -239,10 +269,8 @@ router.get("/history", protect, async (req, res) => {
     const user = req.user;
     if (!user) return res.status(404).json({ message: "User not found" });
 
-    // ✅ Send last 5 (newest first)
-    const recentHistory = (user.history || []).slice(0, 5);
-
-    res.json({ success: true, history: recentHistory });
+    // ✅ Send full history for chart
+    res.json({ success: true, history: user.history || [] });
   } catch (err) {
     console.error("⚠️ Error fetching history:", err);
     res.status(500).json({ success: false, message: err.message });
@@ -346,15 +374,17 @@ router.post("/save-note-tag", protect, async (req, res) => {
         .status(400)
         .json({ success: false, message: "Missing videoId" });
 
-    // Ensure proper Map conversion (in case they were plain objects)
-    if (!(user.notes instanceof Map))
-      user.notes = new Map(Object.entries(user.notes || {}));
-    if (!(user.tags instanceof Map))
-      user.tags = new Map(Object.entries(user.tags || {}));
+    // Ensure proper Object initialization
+    if (!user.notes) user.notes = {};
+    if (!user.tags) user.tags = {};
 
-    // ✅ Save note & tag to Maps
-    if (noteText !== undefined) user.notes.set(videoId, noteText);
-    if (tagText !== undefined) user.tags.set(videoId, tagText);
+    // ✅ Save note & tag
+    if (noteText !== undefined) user.notes[videoId] = noteText;
+    if (tagText !== undefined) user.tags[videoId] = tagText;
+
+    // ✅ Crucial for Object persistence in Mongoose
+    user.markModified("notes");
+    user.markModified("tags");
 
     // ✅ Update existing history entry (instead of adding new one)
     const existing = user.history.find((h) => h.videoId === videoId);
@@ -380,9 +410,9 @@ router.post("/save-note-tag", protect, async (req, res) => {
     res.json({
       success: true,
       message: "Notes and tags saved successfully!",
-      notes: Object.fromEntries(user.notes),
-      tags: Object.fromEntries(user.tags),
-      history: user.history.slice(0, 5),
+      notes: user.notes,
+      tags: user.tags,
+      history: user.history,
     });
   } catch (err) {
     console.error("❌ Error saving note/tag:", err);
@@ -400,14 +430,10 @@ router.get("/notes-tags", protect, async (req, res) => {
     const user = req.user;
     if (!user) return res.status(404).json({ success: false, message: "User not found" });
 
-    // ✅ Convert Map fields to plain objects for frontend readability
-    const plainNotes = Object.fromEntries(user.notes || []);
-    const plainTags = Object.fromEntries(user.tags || []);
-
     res.json({
       success: true,
-      notes: plainNotes,
-      tags: plainTags,
+      notes: user.notes || {},
+      tags: user.tags || {},
     });
   } catch (err) {
     console.error("⚠️ Error fetching notes/tags:", err);

@@ -3,6 +3,7 @@ import { useAppContext } from "../context/AppContext";
 // import { FaceMesh } from "@mediapipe/face_mesh";
 // import { Camera } from "@mediapipe/camera_utils";
 import { io } from "socket.io-client";
+import { jsPDF } from "jspdf";
 
 
 
@@ -27,6 +28,15 @@ const INITIAL_COINS = 500;
 const TAB_SWITCH_COST = 5;
 const DAILY_BONUS = 1;
 const STREAK_BONUS = 5;
+
+// ✅ Helper: Get local date string in YYYY-MM-DD format (respects timezone)
+const getLocalDateString = (date = new Date()) => {
+  const d = new Date(date);
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
 
 
 
@@ -73,7 +83,7 @@ function extractYouTubeId(urlOrId) {
 const ALLOWED_KEYWORDS = [
   "study", "lecture", "tutorial", "math", "science",
   "coding", "programming", "react", "java", "ds algo",
-  "data structures", "education", "exam", "motivation","MySQL"
+  "data structures", "education", "exam", "motivation", "MySQL"
 ];
 
 
@@ -134,31 +144,60 @@ const updateBackendCoinsGain = async (userId, amount) => {
 };
 
 
-const updateVideosWatched = async () => {
+// const updateVideosWatched = async () => {
+//   try {
+//     const token = localStorage.getItem("token"); // 🧠 get user token
+//     const res = await fetch("/api/tracking/videos-watched", {
+//       method: "POST",
+//       headers: {
+//         Authorization: `Bearer ${token}`,
+//       },
+//       credentials: "include", // keep cookie if backend uses it
+//     });
+
+//     const data = await res.json();
+//     if (data.success) {
+//       // ✅ Update frontend streak immediately
+//       setAppState((prev) => ({
+//         ...prev,
+//         streak: data.streak || prev.streak,
+//       }));
+
+//       // ✅ Save streak in localStorage (for persistence)
+//       localStorage.setItem("streak", data.streak || 0);
+
+//       console.log("🔥 Streak updated successfully:", data.streak);
+//     } else {
+//       console.warn("⚠️ Backend returned error:", data.message);
+//     }
+//   } catch (err) {
+//     console.error("❌ Error updating streak:", err);
+//   }
+// };
+
+const updateVideosWatched = async (userIdParam) => {
   try {
-    const token = localStorage.getItem("token"); // 🧠 get user token
+    const token = localStorage.getItem("token");
     const res = await fetch("/api/tracking/videos-watched", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        Authorization: token ? `Bearer ${token}` : undefined,
       },
-      credentials: "include", // keep cookie if backend uses it
+      credentials: "include",
+      body: JSON.stringify({ userId: userIdParam || userId }),
     });
-
     const data = await res.json();
     if (data.success) {
-      // ✅ Update frontend streak immediately
       setAppState((prev) => ({
         ...prev,
-        streak: data.streak || prev.streak,
+        streak: data.streak ?? prev.streak,
+        lastDayWatched: data.lastDayWatched ?? prev.lastDayWatched,
       }));
-
-      // ✅ Save streak in localStorage (for persistence)
-      localStorage.setItem("streak", data.streak || 0);
-
+      localStorage.setItem("streak", String(data.streak ?? (appState.streak ?? 0)));
       console.log("🔥 Streak updated successfully:", data.streak);
     } else {
-      console.warn("⚠️ Backend returned error:", data.message);
+      console.warn("⚠️ Backend returned error while fetching streak:", data.message);
     }
   } catch (err) {
     console.error("❌ Error updating streak:", err);
@@ -183,31 +222,33 @@ const updateVideosSwitched = async (userId) => {
 
 
 // 🧠 Add this helper function (top of file or utils)
-const updateBackendStreak = async (userId, newStreak, lastWatched) => {
+const updateBackendStreak = async (userIdParam, newStreak, lastWatchedISO) => {
   try {
+    const token = localStorage.getItem("token");
     const res = await fetch("/api/tracking/videos-watched", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: token ? `Bearer ${token}` : undefined,
+      },
       credentials: "include",
       body: JSON.stringify({
-        userId,
+        userId: userIdParam || userId,
         streak: newStreak,
-        lastDayWatched: lastWatched,
+        lastDayWatched: lastWatchedISO,
       }),
     });
-
     const data = await res.json();
-
     if (data.success) {
       setAppState((prev) => ({
         ...prev,
-        streak: data.streak,
-        lastDayWatched: data.lastDayWatched,
+        streak: data.streak ?? newStreak,
+        lastDayWatched: data.lastDayWatched ?? lastWatchedISO,
       }));
-      localStorage.setItem("streak", data.streak || 0);
-      console.log("🔥 Streak updated successfully:", data.streak);
+      localStorage.setItem("streak", String(data.streak ?? newStreak));
+      console.log("🔥 Streak synced successfully:", data.streak ?? newStreak);
     } else {
-      console.warn("⚠️ Backend returned error:", data.message);
+      console.warn("⚠️ Backend returned error while syncing streak:", data.message);
     }
   } catch (err) {
     console.error("⚠️ Error syncing streak:", err);
@@ -216,7 +257,7 @@ const updateBackendStreak = async (userId, newStreak, lastWatched) => {
 
 const playRestrictionSound = () => {
   const audio = new Audio("/alert_beep1.wav");
-  audio.play().catch(() => {});
+  audio.play().catch(() => { });
 };
 
 
@@ -234,15 +275,15 @@ export default function VideoTracker() {
 
   // App state
   const { appState, setAppState } = useAppContext();
-  
-const [showBlockedPopup, setShowBlockedPopup] = useState(false);
-const [blockedTitle, setBlockedTitle] = useState("");
+
+  const [showBlockedPopup, setShowBlockedPopup] = useState(false);
+  const [blockedTitle, setBlockedTitle] = useState("");
 
   const [inputUrl, setInputUrl] = useState("");
   const [videoId, setVideoId] = useState(null);
   const [localVideoFile, setLocalVideoFile] = useState(null);
   const [localVideoObjectUrl, setLocalVideoObjectUrl] = useState(null);
-  
+
 
 
   const [playerReady, setPlayerReady] = useState(false);
@@ -253,11 +294,13 @@ const [blockedTitle, setBlockedTitle] = useState("");
 
   const [tabSwitches, setTabSwitches] = useState(0);
   const [sessionTabSwitches, setSessionTabSwitches] = useState(0);
-  
+
   const [noteText, setNoteText] = useState("");
   const [tagText, setTagText] = useState("");
   const [weeklyStats, setWeeklyStats] = useState({});
   const [lastFiveDays, setLastFiveDays] = useState([]);
+  const [showNoteModal, setShowNoteModal] = useState(false);
+  const [selectedNote, setSelectedNote] = useState("");
   const [showTimerPopup, setShowTimerPopup] = useState(false);
   const [focusMinutes, setFocusMinutes] = useState(25);
   const [focusRemaining, setFocusRemaining] = useState(null);
@@ -289,215 +332,259 @@ const [blockedTitle, setBlockedTitle] = useState("");
   const cameraVideoRef = useRef(null);
   const cameraCanvasRef = useRef(null);
   const socketRef = useRef(null);
+  // refs for swipe/trackpad navigation
+  const wheelLastRef = useRef(0);
+  const touchStartXRef = useRef(null);
+  const wheelAccumRef = useRef(0);
 
   // const [showWarning, setShowWarning] = useState(false);
   // const [warningText, setWarningText] = useState("");
 
 
-//    const saveDetectionToBackend = async (payloadObj) => {
-//   try {
-//     await fetch("/api/detections/save", {
-//       method: "POST",
-//       headers: { "Content-Type": "application/json" },
-//       credentials: "include", // ⭐ cookie token ke liye must
-//       body: JSON.stringify(payloadObj),
-//     });
-//   } catch (err) {
-//     console.error("❌ Detection save failed:", err);
-//   }
-// };
+  //    const saveDetectionToBackend = async (payloadObj) => {
+  //   try {
+  //     await fetch("/api/detections/save", {
+  //       method: "POST",
+  //       headers: { "Content-Type": "application/json" },
+  //       credentials: "include", // ⭐ cookie token ke liye must
+  //       body: JSON.stringify(payloadObj),
+  //     });
+  //   } catch (err) {
+  //     console.error("❌ Detection save failed:", err);
+  //   }
+  // };
 
-// const showTopWarning = (msg) => {
-//   setWarningText(msg);
-//   setShowWarning(true);
+  // const showTopWarning = (msg) => {
+  //   setWarningText(msg);
+  //   setShowWarning(true);
 
-//   setTimeout(() => {
-//     setShowWarning(false);
-//   }, 2500);
-// };
+  //   setTimeout(() => {
+  //     setShowWarning(false);
+  //   }, 2500);
+  // };
 
-const toggleDetector = async () => {
-  try {
-    if (!showCameraAnalysis) {
-      await fetch("/api/detector/start", { method: "POST" });
-    } else {
-      await fetch("/api/detector/stop", { method: "POST" });
+  const toggleDetector = async () => {
+    try {
+      if (!showCameraAnalysis) {
+        await fetch("/api/detector/start", { method: "POST" });
+      } else {
+        await fetch("/api/detector/stop", { method: "POST" });
+      }
+
+      setShowCameraAnalysis((prev) => !prev);
+    } catch (err) {
+      console.log("Detector toggle error:", err);
     }
-
-    setShowCameraAnalysis((prev) => !prev);
-  } catch (err) {
-    console.log("Detector toggle error:", err);
-  }
-};
+  };
 
 
 
   const [history, setHistory] = useState([]);
 
+  // Monthly 5-day sliding window state for performance chart
+  const MONTHS = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December"
+  ];
+  const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
+  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+  const [monthData, setMonthData] = useState([]); // full month data (one item per day)
+  const [monthStartIndex, setMonthStartIndex] = useState(0); // start index for visible 5-day window
+
   const loadState = async () => {
-const storedUser = JSON.parse(localStorage.getItem("user"));
-const storedCoins = storedUser?.coins ?? localStorage.getItem("coins") ?? 0;
-const storedStreak = storedUser?.streak ?? localStorage.getItem("streak") ?? 0;
+    const storedUser = JSON.parse(localStorage.getItem("user"));
+    const storedCoins = storedUser?.coins ?? localStorage.getItem("coins") ?? 0;
+    const storedStreak = storedUser?.streak ?? localStorage.getItem("streak") ?? 0;
 
 
-return {
-  coins: storedCoins,
-  userId: storedUser?._id || storedUser?.id || null,
-  secondsWatched: 0,
-  focusPoints: 0,
-};
-
-
-
-
-};
-
-
-useEffect(() => {
-  const storedStreak = localStorage.getItem("streak");
-  if (storedStreak) {
-    setAppState((prev) => ({
-      ...prev,
-      streak: parseInt(storedStreak, 10),
-    }));
-  } else {
-    // Fetch once from backend if no local streak
-    const user = JSON.parse(localStorage.getItem("user"));
-    if (user) {
-      fetch(`/api/tracking/coins/${user._id || user.id}`)
-        .then((res) => res.json())
-        .then(() => {
-          fetch("/api/tracking/videos-watched", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            credentials: "include",
-          })
-            .then((r) => r.json())
-            .then((data) => {
-              if (data.success) {
-                setAppState((p) => ({
-                  ...p,
-                  streak: data.streak,
-                }));
-                localStorage.setItem("streak", data.streak || 0);
-              }
-            });
-        });
-    }
-  }
-}, []);
+    return {
+      coins: storedCoins,
+      userId: storedUser?._id || storedUser?.id || null,
+      secondsWatched: 0,
+      focusPoints: 0,
+    };
 
 
 
 
+  };
 
-// 🧠 Split-screen detection
-// 🧠 Split-Screen Detection — Improved Version
-useEffect(() => {
-  let lastAlertTime = 0; 
-  let alertCooldown = 2000; // 2 sec cooldown to avoid spam
 
-  const detectSplitScreen = () => {
-    if (!isPlaying || focusRemaining <= 0) return;
-
-    const screenWidth = window.screen.width;
-    const windowWidth = window.innerWidth;
-    const ratio = windowWidth / screenWidth;
-
-    // 🚨 Trigger when window width < 70%
-    if (ratio < 0.7) {
-      const now = Date.now();
-
-      // Avoid rapid-fire alerts (only allow after cooldown)
-      if (now - lastAlertTime > alertCooldown) {
-        
-        // Show alert TWICE — BACK TO BACK
-        alert("⚠️ Focus Alert: Split screen detected!");
-        alert("⚠️ Please maximize the study window to continue!");
-
-        // OPTIONAL: Send event to backend
-        if (socketRef.current) {
-          socketRef.current.emit("split_screen_detected", {
-            timestamp: Date.now(),
+  useEffect(() => {
+    const storedStreak = localStorage.getItem("streak");
+    if (storedStreak) {
+      setAppState((prev) => ({
+        ...prev,
+        streak: parseInt(storedStreak, 10),
+      }));
+    } else {
+      // Fetch once from backend if no local streak
+      const user = JSON.parse(localStorage.getItem("user"));
+      if (user) {
+        fetch(`/api/tracking/coins/${user._id || user.id}`)
+          .then((res) => res.json())
+          .then(() => {
+            fetch("/api/tracking/videos-watched", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              credentials: "include",
+            })
+              .then((r) => r.json())
+              .then((data) => {
+                if (data.success) {
+                  setAppState((p) => ({
+                    ...p,
+                    streak: data.streak,
+                  }));
+                  localStorage.setItem("streak", data.streak || 0);
+                }
+              });
           });
-        }
-
-        lastAlertTime = now;
       }
     }
-  };
-
-  window.addEventListener("resize", detectSplitScreen);
-  document.addEventListener("visibilitychange", detectSplitScreen);
-
-  return () => {
-    window.removeEventListener("resize", detectSplitScreen);
-    document.removeEventListener("visibilitychange", detectSplitScreen);
-  };
-}, [isPlaying, focusRemaining]);
-
-
-useEffect(() => {
-  const savedNotes = localStorage.getItem("userNotes");
-  const savedTags = localStorage.getItem("userTags");
-
-  if (savedNotes || savedTags) {
-    setAppState(prev => ({
-      ...prev,
-      notes: savedNotes ? JSON.parse(savedNotes) : {},
-      tags: savedTags ? JSON.parse(savedTags) : {}
-    }));
-  }
-}, []);
+  }, []);
 
 
 
 
 
-// useEffect(() => {
-// const fetchCoins = async () => {
-// const user = JSON.parse(localStorage.getItem("user"));
-// if (!user) return;
+  // 🧠 Split-screen detection
+  // 🧠 Split-Screen Detection — Improved Version
+  useEffect(() => {
+    let lastAlertTime = 0;
+    let alertCooldown = 2000; // 2 sec cooldown to avoid spam
 
-//   try {
-//     const res = await fetch(`/api/tracking/coins/${user._id || user.id}`);
-//     if (!res.ok) throw new Error("Failed to fetch coins");
-//     const data = await res.json();
+    const detectSplitScreen = () => {
+      if (!isPlaying || focusRemaining <= 0) return;
 
-//     setAppState((prev) => ({ ...prev, coins: data.coins }));
-//     localStorage.setItem("coins", data.coins);
-//   } catch (err) {
-//     console.error("Coin fetch error:", err);
-//   }
-// };
+      const screenWidth = window.screen.width;
+      const windowWidth = window.innerWidth;
+      const ratio = windowWidth / screenWidth;
 
-// fetchCoins();
-// }, [setAppState]);
+      // 🚨 Trigger when window width < 70%
+      if (ratio < 0.7) {
+        const now = Date.now();
+
+        // Avoid rapid-fire alerts (only allow after cooldown)
+        if (now - lastAlertTime > alertCooldown) {
+
+          // Show alert TWICE — BACK TO BACK
+          alert("⚠️ Focus Alert: Split screen detected!");
+          alert("⚠️ Please maximize the study window to continue!");
+
+          // OPTIONAL: Send event to backend
+          if (socketRef.current) {
+            socketRef.current.emit("split_screen_detected", {
+              timestamp: Date.now(),
+            });
+          }
+
+          lastAlertTime = now;
+        }
+      }
+    };
+
+    window.addEventListener("resize", detectSplitScreen);
+    document.addEventListener("visibilitychange", detectSplitScreen);
+
+    return () => {
+      window.removeEventListener("resize", detectSplitScreen);
+      document.removeEventListener("visibilitychange", detectSplitScreen);
+    };
+  }, [isPlaying, focusRemaining]);
 
 
+  useEffect(() => {
+    const savedNotes = localStorage.getItem(`userNotes_${userId}`);
 
-useEffect(() => {
-  const fetchCoins = async () => {
-    const user = JSON.parse(localStorage.getItem("user"));
-    if (!user) return;
+    const savedTags = localStorage.getItem(`userTags_${userId}`);
 
-    try {
-      const res = await fetch(`/api/tracking/coins/${user._id || user.id}`);
-      if (!res.ok) throw new Error("Failed to fetch coins");
-      const data = await res.json();
 
-      setAppState((prev) => ({ ...prev, coins: data.coins }));
-      localStorage.setItem("coins", data.coins);
-
-      setCoinsLoaded(true); // ✅ VERY IMPORTANT
-    } catch (err) {
-      console.error("Coin fetch error:", err);
-      setCoinsLoaded(true); // even on error, stop loader
+    if (savedNotes || savedTags) {
+      setAppState(prev => ({
+        ...prev,
+        notes: savedNotes ? JSON.parse(savedNotes) : {},
+        tags: savedTags ? JSON.parse(savedTags) : {}
+      }));
     }
-  };
+  }, []);
 
-  fetchCoins();
-}, [setAppState]);
+
+
+
+
+  // useEffect(() => {
+  // const fetchCoins = async () => {
+  // const user = JSON.parse(localStorage.getItem("user"));
+  // if (!user) return;
+
+  //   try {
+  //     const res = await fetch(`/api/tracking/coins/${user._id || user.id}`);
+  //     if (!res.ok) throw new Error("Failed to fetch coins");
+  //     const data = await res.json();
+
+  //     setAppState((prev) => ({ ...prev, coins: data.coins }));
+  //     localStorage.setItem("coins", data.coins);
+  //   } catch (err) {
+  //     console.error("Coin fetch error:", err);
+  //   }
+  // };
+
+  // fetchCoins();
+  // }, [setAppState]);
+
+
+
+  useEffect(() => {
+    const fetchCoins = async () => {
+      const user = JSON.parse(localStorage.getItem("user"));
+      if (!user) return;
+
+      try {
+        const res = await fetch(`/api/tracking/coins/${user._id || user.id}`);
+        if (!res.ok) throw new Error("Failed to fetch coins");
+        const data = await res.json();
+
+        setAppState((prev) => ({ ...prev, coins: data.coins }));
+        localStorage.setItem(`coins_${userId}`, data.coins);
+
+
+        setCoinsLoaded(true); // ✅ VERY IMPORTANT
+      } catch (err) {
+        console.error("Coin fetch error:", err);
+        setCoinsLoaded(true); // even on error, stop loader
+      }
+    };
+
+    fetchCoins();
+  }, [setAppState]);
+
+  // ✅ NEW: Fetch notes and tags from backend on mount
+  useEffect(() => {
+    const fetchNotesTags = async () => {
+      if (!userId) return;
+      try {
+        const token = localStorage.getItem("token");
+        const res = await fetch("/api/tracking/notes-tags", {
+          headers: {
+            Authorization: token ? `Bearer ${token}` : undefined,
+          },
+        });
+        const data = await res.json();
+        if (data.success) {
+          setAppState(prev => ({
+            ...prev,
+            notes: data.notes || {},
+            tags: data.tags || {}
+          }));
+        }
+      } catch (err) {
+        console.error("⚠️ Error fetching notes/tags:", err);
+      }
+    };
+
+    fetchNotesTags();
+  }, [userId]);
 
 
   // load YouTube IFrame API
@@ -537,8 +624,8 @@ useEffect(() => {
       setFocusRemaining(null);
       alert("🎉 Focus session complete! You've earned +1 coin.");
       setAppState(prev => ({
-          ...prev,
-          coins: prev.coins + 1
+        ...prev,
+        coins: prev.coins + 1
       }));
       return;
     }
@@ -546,82 +633,206 @@ useEffect(() => {
     return () => clearTimeout(t);
   }, [focusRemaining, isPlaying]);
 
-useEffect(() => {
-  const fetchHistory = async () => {
-    const token = localStorage.getItem("token");
-    if (!token) return;
 
-    try {
-      const res = await fetch("/api/tracking/history", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await res.json();
-      if (data.success) {
-        setAppState((p) => ({ ...p, history: data.history }));
-        localStorage.setItem("userHistory", JSON.stringify(data.history));
-      }
-    } catch (err) {
-      console.error("Error fetching history:", err);
-    }
-  };
+  useEffect(() => {
+    const fetchHistory = async () => {
+      const token = localStorage.getItem("token");
+      if (!token) return;
 
-  fetchHistory();
-}, []);
-
-
-
-useEffect(() => {
-  const savedHistory = localStorage.getItem("userHistory");
-  if (savedHistory) {
-    setAppState((prev) => ({
-      ...prev,
-      history: JSON.parse(savedHistory),
-    }));
-  }
-}, []);
-
-useEffect(() => {
-  const fetchWeeklyStats = async () => {
-    const token = localStorage.getItem("token");
-
-    // 🧠 Try loading from cache first (for instant chart)
-    const cached = localStorage.getItem("weeklyStats");
-    if (cached) {
       try {
-        setWeeklyStats(JSON.parse(cached));
-      } catch {}
-    }
+        const res = await fetch("/api/tracking/history", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
 
-    try {
-      // 🛰 Fetch latest from backend
-      const res = await fetch("/api/tracking/weekly-stats", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await res.json();
+        const data = await res.json();
 
-      if (data.success) {
-        setWeeklyStats(data.stats);
-        localStorage.setItem("weeklyStats", JSON.stringify(data.stats));
+        if (data.success) {
+          setAppState((prev) => {
+            const oldHistory = prev.history || [];
+            const newHistory = data.history || [];
+
+            // ✅ MERGE + REMOVE DUPLICATES
+            const merged = [...oldHistory, ...newHistory].filter(
+              (item, index, self) =>
+                index ===
+                self.findIndex(
+                  (t) =>
+                    t.videoId === item.videoId &&
+                    t.watchedAt === item.watchedAt &&
+                    t.seconds === item.seconds
+                )
+            );
+
+            // ✅ SAVE SAFE COPY
+            localStorage.setItem(
+              `userHistory_${userId}`,
+              JSON.stringify(merged)
+            );
+
+            return { ...prev, history: merged };
+          });
+        }
+      } catch (err) {
+        console.error("Error fetching history:", err);
       }
-    } catch (err) {
-      console.error("Error fetching weekly stats:", err);
+    };
+
+    fetchHistory();
+  }, [userId]);   // ✅ important
+
+
+
+
+  useEffect(() => {
+    const savedHistory = localStorage.getItem(`userHistory_${userId}`);
+
+    if (savedHistory) {
+      setAppState((prev) => ({
+        ...prev,
+        history: JSON.parse(savedHistory),
+      }));
+    }
+  }, []);
+
+  // Build monthData (minutes per day) from appState.history whenever history / month / year change
+  useEffect(() => {
+    const buildMonthData = () => {
+      const year = Number(selectedYear);
+      const month = Number(selectedMonth);
+      const daysInMonth = new Date(year, month + 1, 0).getDate();
+      //const historyArr = Array.isArray(appState.history) ? appState.history : [];
+      const historyArr = Array.isArray(appState.history)
+        ? appState.history
+        : JSON.parse(localStorage.getItem(`userHistory_${userId}`)) || [];
+
+
+      const dailyTotals = {};
+      historyArr.forEach(item => {
+        const dateKey = item.watchedAt ? (item.watchedAt.split("T")[0] || item.watchedAt) : "";
+        if (!dateKey) return;
+        const secs = Number(item.seconds ?? item.secondsWatched ?? 0) || 0;
+        dailyTotals[dateKey] = (dailyTotals[dateKey] || 0) + Math.floor(secs / 60);
+      });
+
+      const arr = [];
+      for (let d = 1; d <= daysInMonth; d++) {
+        const dateObj = new Date(year, month, d);
+        const dateKey = getLocalDateString(dateObj);
+        arr.push({
+          dateKey,
+          label: `${MONTHS[month]} ${d}`,
+          mins: dailyTotals[dateKey] || 0,
+        });
+      }
+
+      setMonthData(arr);
+
+      // Auto-position to show last 10 days ending on today
+      const today = new Date();
+      const todayDate = today.getDate();
+      const todayMonth = today.getMonth();
+      const todayYear = today.getFullYear();
+      // Only auto-position if we're viewing the current month
+      if (month === todayMonth && year === todayYear) {
+        const endDay = Math.min(todayDate, daysInMonth);
+        const startDay = Math.max(1, endDay - 9); // 10-day window
+        setMonthStartIndex(startDay - 1); // -1 because arr is 0-indexed but days are 1-indexed
+      } else {
+        setMonthStartIndex(0);
+      }
+    };
+
+    buildMonthData();
+  }, [appState.history, selectedMonth, selectedYear]);
+
+  // Handlers for trackpad (wheel) and touch swipes to navigate by 10-day frames
+  const handleWheelNav = (e) => {
+    // only react to primarily horizontal wheel gestures
+    if (Math.abs(e.deltaX) < Math.abs(e.deltaY)) return;
+
+    // accumulate horizontal deltas to make transitions stable/smooth
+    wheelAccumRef.current += e.deltaX;
+    const THRESH = 120; // pixels accumulated before changing frame
+    const acc = wheelAccumRef.current;
+
+    if (Math.abs(acc) >= THRESH) {
+      const steps = Math.max(1, Math.floor(Math.abs(acc) / THRESH));
+      if (acc > 0) {
+        setMonthStartIndex((s) => Math.min(Math.max(0, monthData.length - 10), s + steps * 10));
+      } else {
+        setMonthStartIndex((s) => Math.max(0, s - steps * 10));
+      }
+      wheelAccumRef.current = 0;
+      wheelLastRef.current = Date.now();
     }
   };
 
-  fetchWeeklyStats();
-}, []);
+  const onTouchStart = (e) => {
+    touchStartXRef.current = e.touches?.[0]?.clientX ?? null;
+  };
+
+  const onTouchEnd = (e) => {
+    const start = touchStartXRef.current;
+    if (start == null) return;
+    const end = e.changedTouches?.[0]?.clientX ?? start;
+    const diff = start - end;
+    // increased threshold for more stable swipes
+    if (Math.abs(diff) < 80) {
+      touchStartXRef.current = null;
+      return;
+    }
+    if (diff > 0) {
+      // swipe left -> next
+      setMonthStartIndex((s) => Math.min(Math.max(0, monthData.length - 10), s + 10));
+    } else {
+      // swipe right -> prev
+      setMonthStartIndex((s) => Math.max(0, s - 10));
+    }
+    touchStartXRef.current = null;
+  };
+
+  useEffect(() => {
+    const fetchWeeklyStats = async () => {
+      const token = localStorage.getItem("token");
+
+      // 🧠 Try loading from cache first (for instant chart)
+      const cached = localStorage.getItem("weeklyStats");
+      if (cached) {
+        try {
+          setWeeklyStats(JSON.parse(cached));
+        } catch { }
+      }
+
+      try {
+        // 🛰 Fetch latest from backend
+        const res = await fetch("/api/tracking/weekly-stats", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const data = await res.json();
+
+        if (data.success) {
+          setWeeklyStats(data.stats);
+          localStorage.setItem("weeklyStats", JSON.stringify(data.stats));
+        }
+      } catch (err) {
+        console.error("Error fetching weekly stats:", err);
+      }
+    };
+
+    fetchWeeklyStats();
+  }, []);
 
 
 
-useEffect(() => {
-  const coins = Number(appState.coins);
+  useEffect(() => {
+    const coins = Number(appState.coins);
 
-  if (!isNaN(coins) && coins <= 0) {
-    setShowZeroCoinsPopup(true);
-  } else {
-    setShowZeroCoinsPopup(false);
-  }
-}, [appState.coins]);
+    if (!isNaN(coins) && coins <= 0) {
+      setShowZeroCoinsPopup(true);
+    } else {
+      setShowZeroCoinsPopup(false);
+    }
+  }, [appState.coins]);
 
 
 
@@ -637,11 +848,10 @@ useEffect(() => {
     setSessionViewsTaken(0);
     setEarnedThisSessionCoins(false);
     setHasPlaybackStarted(false);
-  const currentVideoKey = videoId || localVideoFile?.name;
-setNoteText(appState.notes?.[currentVideoKey] || "");
-setTagText(appState.tags?.[currentVideoKey] || "");
+    const currentVideoKey = videoId || localVideoFile?.name;
+    setNoteText(""); // 📓 Running notebook: start with empty textarea for new entries
+    setTagText(appState.tags?.[currentVideoKey] || "");
 
-    setTagText("");
     stopPolling();
 
 
@@ -654,7 +864,7 @@ setTagText(appState.tags?.[currentVideoKey] || "");
         if (youtubePlayerRef.current) {
           try {
             youtubePlayerRef.current.destroy();
-          } catch (e) {}
+          } catch (e) { }
           youtubePlayerRef.current = null;
         }
 
@@ -682,7 +892,7 @@ setTagText(appState.tags?.[currentVideoKey] || "");
                 stopPolling();
                 if (state === window.YT.PlayerState.ENDED) {
                   finalizeSession(true);
-                   updateVideosWatched(userId);
+                  updateVideosWatched(userId);
                 }
               }
             },
@@ -748,111 +958,111 @@ setTagText(appState.tags?.[currentVideoKey] || "");
 
 
 
-// useEffect(() => {
-//   if (!showCameraAnalysis) return;
+  // useEffect(() => {
+  //   if (!showCameraAnalysis) return;
 
-//   let camera = null;
-//   let faceMesh = null;
+  //   let camera = null;
+  //   let faceMesh = null;
 
-//   // ✅ throttle (5 sec me 1 baar save)
-//   let lastSentTime = 0;
+  //   // ✅ throttle (5 sec me 1 baar save)
+  //   let lastSentTime = 0;
 
-//   const startFaceMesh = async () => {
-//     try {
-//       faceMesh = new FaceMesh({
-//         locateFile: (file) =>
-//           `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`,
-//       });
+  //   const startFaceMesh = async () => {
+  //     try {
+  //       faceMesh = new FaceMesh({
+  //         locateFile: (file) =>
+  //           `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`,
+  //       });
 
-//       faceMesh.setOptions({
-//         maxNumFaces: 3, // ✅ multiple faces detect
-//         refineLandmarks: true,
-//         minDetectionConfidence: 0.6,
-//         minTrackingConfidence: 0.6,
-//       });
+  //       faceMesh.setOptions({
+  //         maxNumFaces: 3, // ✅ multiple faces detect
+  //         refineLandmarks: true,
+  //         minDetectionConfidence: 0.6,
+  //         minTrackingConfidence: 0.6,
+  //       });
 
-//       faceMesh.onResults((results) => {
-//         const facesCount = results?.multiFaceLandmarks?.length || 0;
+  //       faceMesh.onResults((results) => {
+  //         const facesCount = results?.multiFaceLandmarks?.length || 0;
 
-//         let direction = "unknown";
-//         let focused = false;
+  //         let direction = "unknown";
+  //         let focused = false;
 
-//         // ✅ 1 face = focused
-//         if (facesCount === 1) {
-//           focused = true;
+  //         // ✅ 1 face = focused
+  //         if (facesCount === 1) {
+  //           focused = true;
 
-//           const lm = results.multiFaceLandmarks[0];
-//           const nose = lm[1];
+  //           const lm = results.multiFaceLandmarks[0];
+  //           const nose = lm[1];
 
-//           // Left/Right/Center detection
-//           if (nose.x < 0.42) direction = "left";
-//           else if (nose.x > 0.58) direction = "right";
-//           else direction = "center";
-//         }
+  //           // Left/Right/Center detection
+  //           if (nose.x < 0.42) direction = "left";
+  //           else if (nose.x > 0.58) direction = "right";
+  //           else direction = "center";
+  //         }
 
-//         // 🚨 No face or multiple faces => not focused
-//         if (facesCount === 0 || facesCount > 1) {
-//           focused = false;
-//         }
+  //         // 🚨 No face or multiple faces => not focused
+  //         if (facesCount === 0 || facesCount > 1) {
+  //           focused = false;
+  //         }
 
-//         // ✅ payload (backend ke according)
-//         const payload = {
-//           focused,
-//           faces_count: facesCount,
-//           direction,
-//         };
+  //         // ✅ payload (backend ke according)
+  //         const payload = {
+  //           focused,
+  //           faces_count: facesCount,
+  //           direction,
+  //         };
 
-//         // UI update
-//         setCameraAnalysisResult(JSON.stringify(payload));
+  //         // UI update
+  //         setCameraAnalysisResult(JSON.stringify(payload));
 
-//         // ================== ✅ WARNINGS ==================
-//         if (facesCount === 0) {
-//           showTopWarning("Face not detected! Please sit properly 👀");
-//         } else if (facesCount > 1) {
-//           showTopWarning("Multiple faces detected! Only you should be present 🚫");
-//         } else {
-//           // 1 face but looking away
-//           if (direction === "left" || direction === "right") {
-//             showTopWarning(`You are looking ${direction}. Focus on screen 📌`);
-//           }
-//         }
-//         // =================================================
+  //         // ================== ✅ WARNINGS ==================
+  //         if (facesCount === 0) {
+  //           showTopWarning("Face not detected! Please sit properly 👀");
+  //         } else if (facesCount > 1) {
+  //           showTopWarning("Multiple faces detected! Only you should be present 🚫");
+  //         } else {
+  //           // 1 face but looking away
+  //           if (direction === "left" || direction === "right") {
+  //             showTopWarning(`You are looking ${direction}. Focus on screen 📌`);
+  //           }
+  //         }
+  //         // =================================================
 
-//         // ✅ backend save (5 sec me 1 baar)
-//         const now = Date.now();
-//         if (now - lastSentTime > 60000) {
-//           lastSentTime = now;
-//           saveDetectionToBackend(payload);
-//         }
-//       });
+  //         // ✅ backend save (5 sec me 1 baar)
+  //         const now = Date.now();
+  //         if (now - lastSentTime > 60000) {
+  //           lastSentTime = now;
+  //           saveDetectionToBackend(payload);
+  //         }
+  //       });
 
-//       // ✅ Start camera
-//       camera = new Camera(cameraVideoRef.current, {
-//         onFrame: async () => {
-//           if (cameraVideoRef.current) {
-//             await faceMesh.send({ image: cameraVideoRef.current });
-//           }
-//         },
-//         width: 640,
-//         height: 480,
-//       });
+  //       // ✅ Start camera
+  //       camera = new Camera(cameraVideoRef.current, {
+  //         onFrame: async () => {
+  //           if (cameraVideoRef.current) {
+  //             await faceMesh.send({ image: cameraVideoRef.current });
+  //           }
+  //         },
+  //         width: 640,
+  //         height: 480,
+  //       });
 
-//       camera.start();
-//     } catch (err) {
-//       console.error("FaceMesh error:", err);
-//       setCameraAnalysisResult(
-//         JSON.stringify({ error: err.message || "FaceMesh failed" })
-//       );
-//     }
-//   };
+  //       camera.start();
+  //     } catch (err) {
+  //       console.error("FaceMesh error:", err);
+  //       setCameraAnalysisResult(
+  //         JSON.stringify({ error: err.message || "FaceMesh failed" })
+  //       );
+  //     }
+  //   };
 
-//   startFaceMesh();
+  //   startFaceMesh();
 
-//   return () => {
-//     if (camera) camera.stop();
-//     if (faceMesh) faceMesh.close();
-//   };
-// }, [showCameraAnalysis]);
+  //   return () => {
+  //     if (camera) camera.stop();
+  //     if (faceMesh) faceMesh.close();
+  //   };
+  // }, [showCameraAnalysis]);
 
 
 
@@ -890,338 +1100,382 @@ setTagText(appState.tags?.[currentVideoKey] || "");
     }
   };
 
- 
+
 
 
 
   // --- BACKEND SYNC ON TAB HIDE ---
-// other hooks, states, and helper functions above...
+  // other hooks, states, and helper functions above...
 
-// ✅ Unified visibility handler — only deduct coins if focus timer is running
-// // --- Deduct coins if focus timer is running ---
-// useEffect(() => {
-//   let lastHiddenTime = 0;
-//   let tabSwitchTriggered = false; 
-//   let timeoutId = null;
-//   let lastSwitchTimestamp = 0; // 🧠 prevents backend double fire within same second
-
-
-
-
-//   const handleVisibilityChange = async () => {
-//     const now = Date.now();
-
-//     // ✅ Case: Tab hidden → Deduct once
-//    if (document.visibilityState === "hidden" && focusRemaining > 0 && !tabSwitchTriggered) {
-
-//       // Prevent double-trigger if called twice quickly
-//       if (now - lastSwitchTimestamp < 800) return; // 🔒 stops 2 backend calls
-//       lastSwitchTimestamp = now;
-
-//       tabSwitchTriggered = true; 
-//       lastHiddenTime = now;
-
-//       if (focusRemaining > 0) {
-//         const deducted = TAB_SWITCH_COST;
-
-//         try {
-//           // ✅ 1. Deduct coins (backend)
-//           await updateBackendCoins(deducted);
-
-//           // ✅ 2. Update frontend coins
-//           setAppState((prev) => {
-//             const newCoins = Math.max((prev.coins || 0) - deducted, 0);
-//             if (newCoins <= 0) setShowZeroCoinsPopup(true);
-//             return { ...prev, coins: newCoins };
-//           });
-
-//           // ✅ 3. Update backend tab switch (only once)
-//           try {
-//             await updateVideosSwitched(userId);
-//             console.log("📡 Backend tab switch +1 ✅");
-//           } catch (e) {
-//             console.error("⚠️ Failed backend update:", e);
-//           }
-
-//           // ✅ 4. Update frontend display (+1)
-//           setTabSwitches((prev) => prev + 1);
-//           console.log("📊 Local tab switch +1 ✅");
-
-//         } catch (e) {
-//           console.error("❌ Coin deduction failed:", e);
-//         }
-//       }
-
-//       // ✅ Continue timer; don't reset watched seconds
-//       // if (sessionPlayedSeconds > 0 && !earnedThisSessionCoins) {
-//       //   finalizeSession(false);
-//       // }
-//       // console.log("▶️ Timer continuing normally after tab switch");
-//     }
-
-//     // ✅ Unlock next switch (after small delay)
-//     if (document.visibilityState === "visible") {
-//       clearTimeout(timeoutId);
-//       timeoutId = setTimeout(() => {
-//         tabSwitchTriggered = false;
-//       }, 600);
-//     }
-//   };
-
-//   document.addEventListener("visibilitychange", handleVisibilityChange);
-//   return () => {
-//     document.removeEventListener("visibilitychange", handleVisibilityChange);
-//     clearTimeout(timeoutId);
-//   };
-// }, [isPlaying, focusRemaining, sessionPlayedSeconds, earnedThisSessionCoins, userId]);
+  // ✅ Unified visibility handler — only deduct coins if focus timer is running
+  // // --- Deduct coins if focus timer is running ---
+  // useEffect(() => {
+  //   let lastHiddenTime = 0;
+  //   let tabSwitchTriggered = false; 
+  //   let timeoutId = null;
+  //   let lastSwitchTimestamp = 0; // 🧠 prevents backend double fire within same second
 
 
 
-useEffect(() => {
-  let tabSwitchTriggered = false;
-  let timeoutId = null;
-  let lastSwitchTimestamp = 0;
 
-  const handleVisibilityChange = async () => {
-    const now = Date.now();
+  //   const handleVisibilityChange = async () => {
+  //     const now = Date.now();
 
-    // ✅ Tab switch penalty when video is playing (YouTube + Local)
-    if (
-      (document.visibilityState === "hidden" || document.hasFocus() === false) &&
-      isPlaying &&
-      !tabSwitchTriggered
-    ) {
-      if (now - lastSwitchTimestamp < 800) return;
-      lastSwitchTimestamp = now;
+  //     // ✅ Case: Tab hidden → Deduct once
+  //    if (document.visibilityState === "hidden" && focusRemaining > 0 && !tabSwitchTriggered) {
 
-      tabSwitchTriggered = true;
+  //       // Prevent double-trigger if called twice quickly
+  //       if (now - lastSwitchTimestamp < 800) return; // 🔒 stops 2 backend calls
+  //       lastSwitchTimestamp = now;
 
-      const deducted = TAB_SWITCH_COST;
+  //       tabSwitchTriggered = true; 
+  //       lastHiddenTime = now;
 
-      try {
-        await updateBackendCoins(deducted);
+  //       if (focusRemaining > 0) {
+  //         const deducted = TAB_SWITCH_COST;
 
-        setAppState((prev) => {
-          const newCoins = Math.max((prev.coins || 0) - deducted, 0);
-          if (newCoins <= 0) setShowZeroCoinsPopup(true);
-          return { ...prev, coins: newCoins };
-        });
+  //         try {
+  //           // ✅ 1. Deduct coins (backend)
+  //           await updateBackendCoins(deducted);
 
-        await updateVideosSwitched(userId);
+  //           // ✅ 2. Update frontend coins
+  //           setAppState((prev) => {
+  //             const newCoins = Math.max((prev.coins || 0) - deducted, 0);
+  //             if (newCoins <= 0) setShowZeroCoinsPopup(true);
+  //             return { ...prev, coins: newCoins };
+  //           });
 
-        setTabSwitches((prev) => prev + 1);
-        console.log("📊 Tab switch +1 ✅");
-      } catch (e) {
-        console.error("❌ Coin deduction failed:", e);
+  //           // ✅ 3. Update backend tab switch (only once)
+  //           try {
+  //             await updateVideosSwitched(userId);
+  //             console.log("📡 Backend tab switch +1 ✅");
+  //           } catch (e) {
+  //             console.error("⚠️ Failed backend update:", e);
+  //           }
+
+  //           // ✅ 4. Update frontend display (+1)
+  //           setTabSwitches((prev) => prev + 1);
+  //           console.log("📊 Local tab switch +1 ✅");
+
+  //         } catch (e) {
+  //           console.error("❌ Coin deduction failed:", e);
+  //         }
+  //       }
+
+  //       // ✅ Continue timer; don't reset watched seconds
+  //       // if (sessionPlayedSeconds > 0 && !earnedThisSessionCoins) {
+  //       //   finalizeSession(false);
+  //       // }
+  //       // console.log("▶️ Timer continuing normally after tab switch");
+  //     }
+
+  //     // ✅ Unlock next switch (after small delay)
+  //     if (document.visibilityState === "visible") {
+  //       clearTimeout(timeoutId);
+  //       timeoutId = setTimeout(() => {
+  //         tabSwitchTriggered = false;
+  //       }, 600);
+  //     }
+  //   };
+
+  //   document.addEventListener("visibilitychange", handleVisibilityChange);
+  //   return () => {
+  //     document.removeEventListener("visibilitychange", handleVisibilityChange);
+  //     clearTimeout(timeoutId);
+  //   };
+  // }, [isPlaying, focusRemaining, sessionPlayedSeconds, earnedThisSessionCoins, userId]);
+
+
+
+  useEffect(() => {
+    let tabSwitchTriggered = false;
+    let timeoutId = null;
+    let lastSwitchTimestamp = 0;
+
+    const handleVisibilityChange = async () => {
+      const now = Date.now();
+
+      // ✅ Tab switch penalty when video is playing (YouTube + Local)
+      if (
+        (document.visibilityState === "hidden" || document.hasFocus() === false) &&
+        isPlaying &&
+        !tabSwitchTriggered
+      ) {
+        if (now - lastSwitchTimestamp < 800) return;
+        lastSwitchTimestamp = now;
+
+        tabSwitchTriggered = true;
+
+        const deducted = TAB_SWITCH_COST;
+
+        try {
+          await updateBackendCoins(deducted);
+
+          setAppState((prev) => {
+            const newCoins = Math.max((prev.coins || 0) - deducted, 0);
+            if (newCoins <= 0) setShowZeroCoinsPopup(true);
+            return { ...prev, coins: newCoins };
+          });
+
+          await updateVideosSwitched(userId);
+
+          setTabSwitches((prev) => prev + 1);
+          console.log("📊 Tab switch +1 ✅");
+        } catch (e) {
+          console.error("❌ Coin deduction failed:", e);
+        }
       }
-    }
 
-    // unlock
-    if (document.visibilityState === "visible") {
+      // unlock
+      if (document.visibilityState === "visible") {
+        clearTimeout(timeoutId);
+        timeoutId = setTimeout(() => {
+          tabSwitchTriggered = false;
+        }, 600);
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("blur", handleVisibilityChange);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("blur", handleVisibilityChange);
       clearTimeout(timeoutId);
-      timeoutId = setTimeout(() => {
-        tabSwitchTriggered = false;
-      }, 600);
+    };
+  }, [isPlaying, userId]);
+
+
+
+  const cleanupAfterSession = () => {
+    try {
+      if (playerRef?.current) {
+        playerRef.current.pauseVideo?.();
+        playerRef.current = null;
+      }
+      // setSessionPlayedSeconds(0);
+      setSessionViewsTaken(0);
+      console.log("🧹 Focus session cleaned up!");
+    } catch (err) {
+      console.error("Cleanup failed:", err);
     }
   };
-
-  document.addEventListener("visibilitychange", handleVisibilityChange);
-  window.addEventListener("blur", handleVisibilityChange);
-
-  return () => {
-    document.removeEventListener("visibilitychange", handleVisibilityChange);
-    window.removeEventListener("blur", handleVisibilityChange);
-    clearTimeout(timeoutId);
-  };
-}, [isPlaying, userId]);
-
-
-
-const cleanupAfterSession = () => {
-  try {
-    if (playerRef?.current) {
-      playerRef.current.pauseVideo?.();
-      playerRef.current = null;
-    }
-    // setSessionPlayedSeconds(0);
-    setSessionViewsTaken(0);
-    console.log("🧹 Focus session cleaned up!");
-  } catch (err) {
-    console.error("Cleanup failed:", err);
-  }
-};
 
 
 
 
 
   // --- SESSION FINALIZE ---
-// ✅ Finalize and reward focus session
-const finalizeSession = async (ended = false) => {
-  const currentVideoIdentifier = videoId || localVideoFile?.name;
-  if (!currentVideoIdentifier) return;
+  // ✅ Finalize and reward focus session
+  const finalizeSession = async (ended = false) => {
 
-  const secondsWatched = Math.floor(sessionPlayedSeconds);
-  if (secondsWatched <= 0 && sessionViewsTaken === 0) {
-    cleanupAfterSession();
-    return;
-  }
+    //new add
+    if (window.__alreadyFinalized) {
+      console.log("⛔ finalize blocked (already ran)");
+      return;
+    }
+    window.__alreadyFinalized = true;
 
-  // ✅ +1 reward for completing focus session
-  const reward = 1;
+    //window.__alreadyFinalized = true;
 
-  try {
-    console.log("🎬 Finalizing session... checking penalty order");
+    const currentVideoIdentifier = videoId || localVideoFile?.name;
+    if (!currentVideoIdentifier) return;
 
-    // 🕒 Small delay ensures any -5 deduction from tab switch is processed first
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-
-    // ✅ Prevent multiple +1 rewards
-    if (earnedThisSessionCoins) {
-      console.log("⚠️ Coins for this session already awarded, skipping duplicate +1");
+    const secondsWatched = Math.floor(sessionPlayedSeconds);
+    if (secondsWatched <= 0 && sessionViewsTaken === 0) {
       cleanupAfterSession();
       return;
     }
 
-    // ✅ Save +1 coin to backend
-    const res = await fetch("/api/tracking/coins-gain", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({ userId, gain: reward }),
-    });
+    // ✅ +1 reward for completing focus session
+    const reward = 1;
 
-    if (!res.ok) throw new Error("Failed to update backend coins");
-    const data = await res.json();
-    console.log("✅ Backend coin update:", data);
+    try {
+      console.log("🎬 Finalizing session... checking penalty order");
 
-    // ✅ Update frontend coin state
-    setAppState((prev) => ({
-      ...prev,
-      coins: (prev.coins || 0) + reward,
-    }));
-    localStorage.setItem("coins", (appState.coins || 0) + reward);
+      // 🕒 Small delay ensures any -5 deduction from tab switch is processed first
+      await new Promise((resolve) => setTimeout(resolve, 1000));
 
-    // ✅ Mark session as rewarded and cleanup
-    setEarnedThisSessionCoins(true);
-    cleanupAfterSession();
+      // ✅ Prevent multiple +1 rewards
+      if (earnedThisSessionCoins) {
+        console.log("⚠️ Coins for this session already awarded, skipping duplicate +1");
+        cleanupAfterSession();
+        return;
+      }
 
-    console.log(`🎉 Focus session complete — +${reward} coin saved!`);
-  } catch (error) {
-    console.error("❌ Error finalizing session:", error);
-  }
+      // ✅ Save +1 coin to backend
+      const res = await fetch("/api/tracking/coins-gain", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ userId, gain: reward }),
+      });
+
+      if (!res.ok) throw new Error("Failed to update backend coins");
+      const data = await res.json();
+      console.log("✅ Backend coin update:", data);
+
+      // ✅ Update frontend coin state
+      setAppState((prev) => ({
+        ...prev,
+        coins: (prev.coins || 0) + reward,
+      }));
+      localStorage.setItem("coins", (appState.coins || 0) + reward);
+
+      // ✅ Mark session as rewarded and cleanup
+      setEarnedThisSessionCoins(true);
+      cleanupAfterSession();
+
+      console.log(`🎉 Focus session complete — +${reward} coin saved!`);
+    } catch (error) {
+      console.error("❌ Error finalizing session:", error);
+    }
 
 
 
 
-  const now = new Date();
-  const newHistoryEntry = {
-    videoId: currentVideoIdentifier,
-    url: videoId ? `https://youtu.be/${videoId}` : `file://${localVideoFile.name}`,
-    watchedAt: now.toISOString(),
-    seconds: secondsWatched,
-    viewsTaken: sessionViewsTaken,
-    notes: noteText || appState.notes?.[currentVideoIdentifier] || "",
-    tag: tagText || "",
-  };
-
-  setAppState((prev) => {
-    const stats = { ...(prev.stats || {}) };
-    const prevStat = stats[currentVideoIdentifier] || { totalSeconds: 0, totalViews: 0 };
-    stats[currentVideoIdentifier] = {
-      totalSeconds: prevStat.totalSeconds + secondsWatched,
-      totalViews: prevStat.totalViews + sessionViewsTaken,
+    const now = new Date();
+    const newHistoryEntry = {
+      videoId: currentVideoIdentifier,
+      url: videoId ? `https://youtu.be/${videoId}` : `file://${localVideoFile.name}`,
+      watchedAt: getLocalDateString(now), // ✅ Use local date string instead of ISO
+      seconds: secondsWatched,
+      viewsTaken: sessionViewsTaken,
+      note: noteText || appState.notes?.[currentVideoIdentifier] || "",
+      tag: tagText || "",
     };
 
-    let coins = prev.coins ?? INITIAL_COINS;
-    let streak = prev.streak ?? 0;
-    let lastDay = prev.lastDayWatched ? new Date(prev.lastDayWatched) : null;
-    const todayStr = now.toISOString().split("T")[0];
-    const lastDayStr = lastDay ? lastDay.toISOString().split("T")[0] : null;
+    setAppState((prev) => {
+      const stats = { ...(prev.stats || {}) };
+      const prevStat = stats[currentVideoIdentifier] || { totalSeconds: 0, totalViews: 0 };
+      stats[currentVideoIdentifier] = {
+        totalSeconds: prevStat.totalSeconds + secondsWatched,
+        totalViews: prevStat.totalViews + sessionViewsTaken,
+      };
 
-    if (lastDayStr !== todayStr) {
-      coins += DAILY_BONUS;
-      if (lastDay) {
-        const diff = (now - lastDay) / (1000 * 60 * 60 * 24);
-        if (diff <= 1.5) {
-          streak = (streak || 0) + 1;
-          if (streak > 1) coins += STREAK_BONUS;
+      let coins = prev.coins ?? INITIAL_COINS;
+      let streak = prev.streak ?? 0;
+      // lastDayWatched stored in appState as YYYY-MM-DD string when set
+      let lastDayStr = prev.lastDayWatched || null;
+      const todayStr = getLocalDateString(now);
+
+      if (lastDayStr !== todayStr) {
+        coins += DAILY_BONUS;
+
+        // Helper to parse YYYY-MM-DD to UTC millis
+        const parseYMD = (s) => {
+          if (!s) return null;
+          const [y, m, d] = s.split("-").map((x) => parseInt(x, 10));
+          return Date.UTC(y, m - 1, d);
+        };
+
+        if (lastDayStr) {
+          const lastUTC = parseYMD(lastDayStr);
+          const todayUTC = parseYMD(todayStr);
+          const diffDays = Math.round((todayUTC - lastUTC) / (1000 * 60 * 60 * 24));
+          if (diffDays === 1) {
+            streak = (streak || 0) + 1;
+            if (streak > 1) coins += STREAK_BONUS;
+          } else {
+            streak = 1;
+          }
         } else {
           streak = 1;
         }
-      } else {
-        streak = 1;
+
+        // persist lastDay as YYYY-MM-DD (local date)
+        lastDayStr = todayStr;
+
+        // ✅ Backend streak update here — send user's local date string
+        if (userId) {
+          updateBackendStreak(userId, streak, lastDayStr);
+        }
       }
-      lastDay = new Date(now.toISOString().split("T")[0]);
-       // ✅ Backend streak update here
-  if (userId) {
-    updateBackendStreak(userId, streak, lastDay.toISOString());
-  }
-    }
 
-    const notes = { ...(prev.notes || {}) };
-    if (noteText) notes[currentVideoIdentifier] = noteText;
-    const history = [...(prev.history || []), newHistoryEntry];
+      const notes = { ...(prev.notes || {}) };
+      if (noteText) notes[currentVideoIdentifier] = noteText;
+      const history = [...(prev.history || []), newHistoryEntry];
 
-    // ✅ Backend sync added here
-    if (!earnedThisSessionCoins && userId) {
-      updateBackendCoins(userId, Math.floor(secondsWatched / 60));
-    }
+      // ✅ Backend sync added here
+      if (!earnedThisSessionCoins && userId) {
+        updateBackendCoins(userId, Math.floor(secondsWatched / 60));
+      }
 
-    return {
-      ...prev,
-      history,
-      stats,
-      notes,
-      coins,
-      streak,
-      lastDayWatched: lastDay ? lastDay.toISOString() : prev.lastDayWatched,
-    };
-  });
+      return {
+        ...prev,
+        history,
+        stats,
+        notes,
+        coins,
+        streak,
+        lastDayWatched: lastDayStr || prev.lastDayWatched,
+      };
+    });
 
-  setEarnedThisSessionCoins(true);
-  cleanupAfterSession(ended);
-};
+    setEarnedThisSessionCoins(true);
+    cleanupAfterSession(ended);
+
+    //new
+    setTimeout(() => {
+      window.__alreadyFinalized = false;
+      console.log("🔓 finalize unlocked");
+    }, 2000);
+
+  };
 
 
   // Data computation
   const computeWeeklyStats = (history) => {
-  if (!Array.isArray(history) || history.length === 0) {
-    setWeeklyStats({});
-    return; // ✅ prevents crash if history is undefined or empty
-  }
+    if (!Array.isArray(history) || history.length === 0) {
+      setWeeklyStats({});
+      return; // ✅ prevents crash if history is undefined or empty
+    }
 
-  const stats = {};
-  history.forEach((h) => {
-    const key = new Date(h.watchedAt).toLocaleDateString();
-    stats[key] = (stats[key] || 0) + Math.floor(h.seconds / 60);
-  });
+    const stats = {};
+    history.forEach((h) => {
+      // ✅ Use local date string directly (stored as YYYY-MM-DD)
+      const key = h.watchedAt ? (h.watchedAt.split("T")[0] || h.watchedAt) : "";
+      if (!key) return;
+      stats[key] = (stats[key] || 0) + Math.floor(h.seconds / 60);
+    });
 
-  setWeeklyStats(stats);
-};
+    setWeeklyStats(stats);
+  };
 
 
   const computeLastFiveDays = (history) => {
-  if (!Array.isArray(history)) {
-    console.warn("⚠️ computeLastFiveDays called with invalid history:", history);
-    setLastFiveDays([]); // prevent crash
-    return;
-  }
+    if (!Array.isArray(history)) {
+      console.warn("⚠️ computeLastFiveDays called with invalid history:", history);
+      setLastFiveDays([]); // prevent crash
+      return;
+    }
 
-  const fiveDaysAgo = Date.now() - 1000 * 60 * 60 * 24 * 5;
-  const recent = history
-    .filter((h) => new Date(h.watchedAt).getTime() >= fiveDaysAgo)
-    .sort((a, b) => new Date(b.watchedAt) - new Date(a.watchedAt));
+    // ✅ Filter by date string (YYYY-MM-DD format)
+    const today = getLocalDateString();
+    const fiveDaysAgo = new Date();
+    fiveDaysAgo.setDate(fiveDaysAgo.getDate() - 5);
+    const fiveDaysAgoStr = getLocalDateString(fiveDaysAgo);
 
-  setLastFiveDays(recent);
-};
+    const recent = history
+      .filter((h) => {
+        const hDate = h.watchedAt ? (h.watchedAt.split("T")[0] || h.watchedAt) : "";
+        return hDate >= fiveDaysAgoStr && hDate <= today;
+      })
+      .sort((a, b) => {
+        const aDate = a.watchedAt ? (a.watchedAt.split("T")[0] || a.watchedAt) : "";
+        const bDate = b.watchedAt ? (b.watchedAt.split("T")[0] || b.watchedAt) : "";
+        return bDate.localeCompare(aDate); // newest first
+      });
 
-useEffect(() => {
-  if (appState?.history && Array.isArray(appState.history)) {
-    computeWeeklyStats(appState.history);
-    computeLastFiveDays(appState.history);
-  }
-}, [appState.history]);
+    setLastFiveDays(recent);
+  };
+
+  useEffect(() => {
+    if (appState?.history && Array.isArray(appState.history)) {
+      computeWeeklyStats(appState.history);
+      computeLastFiveDays(appState.history);
+    }
+  }, [appState.history]);
 
 
   // Save on unload
@@ -1250,248 +1504,358 @@ useEffect(() => {
 
   // --- THIS IS THE ONLY UPDATED PART ---
   const getAnalysisString = () => {
-  if (!cameraAnalysisResult) return "Waiting for analysis...";
+    if (!cameraAnalysisResult) return "Waiting for analysis...";
 
-  try {
-    const result = JSON.parse(cameraAnalysisResult);
-
-    if (result.error) return `Error: ${result.error}`;
-
-    let status = `Focused: ${result.focused ? "✅ Yes" : "❌ No"}\n`;
-    status += `Faces Detected: ${result.faces_count}\n`;
-
-    if (result.faces_count === 0) {
-      status += "⚠️ No face detected";
-    } else if (result.faces_count > 1) {
-      status += "🚨 Multiple faces detected";
-    } else {
-      status += `Direction: ${result.direction}\n`;
-      if (result.direction === "left" || result.direction === "right") {
-        status += "⚠️ Please look at the screen";
-      }
-    }
-
-    return status;
-  } catch (e) {
-    return "Waiting for valid data...";
-  }
-};
-
-
-
-
- const handleLoadContent = async () => {
-
- if (appState.coins === 0) {
-  setShowZeroCoinsPopup(true);
-  return;
-}
-
-
-  if (!inputUrl && !localVideoFile) {
-    alert("Please provide a video URL or upload a video file first!");
-    return;
-  }
-
-  // If YouTube URL given
-  if (inputUrl) {
-    const match = inputUrl.match(
-      /(?:v=|\/)([0-9A-Za-z_-]{11})(?:[?&]|$)/
-    );
-
-    if (!match || !match[1]) {
-      alert("Invalid YouTube URL or ID!");
-      return;
-    }
-
-    const id = match[1];
-
-    // 🔥 Study Check
-    const allowed = await isStudyVideo(id);
-    if (!allowed) {
-  setBlockedTitle("This video is not study related!");
-  setShowBlockedPopup(true);
-  playRestrictionSound();   // 🔔 ADD THIS LINE
-  return;
-}
-
-
-    setVideoId(id);
-    setLocalVideoFile(null);
-    setShowTimerPopup(true);
-    return;
-  }
-
-  // If local video chosen
-  if (localVideoFile) {
-    setVideoId(null);
-    setShowTimerPopup(true);
-  }
-};
-
-
-const handleFileChange = (e) => {
-  const file = e.target.files[0];
-  if (file) {
-    setLocalVideoFile(file);
-    const objectUrl = URL.createObjectURL(file);
-    setLocalVideoObjectUrl(objectUrl);
-    setInputUrl(""); // Clear any YouTube link
-  }
-};
-
-const clearHistory = () => {
-  // Optional: clear backend stats if you’ve implemented an API for it
-  setHistory([]);
-  localStorage.removeItem("videoHistory");
-  console.log("History cleared!");
-};
-
-const confirmStartFocus = () => {
-  if (appState.coins <= 0) {
-    alert("You don’t have enough coins to start a focus session!");
-    return;
-  }
-
-  // Start the focus timer (or any logic you had before)
-  setIsFocusTimerPending(true);
-  setFocusRemaining(focusDuration);
-  console.log("Focus session started!");
-};
-
-
-const fetchWeeklyStats = async () => {
-  const token = localStorage.getItem("token");
-
-  // Try cache first
-  const cached = localStorage.getItem("weeklyStats");
-  if (cached) {
     try {
-      setWeeklyStats(JSON.parse(cached));
-    } catch {}
-  }
+      const result = JSON.parse(cameraAnalysisResult);
 
-  try {
-    // Fetch from backend
-    const res = await fetch("/api/tracking/weekly-stats", {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    const data = await res.json();
+      if (result.error) return `Error: ${result.error}`;
 
-    if (data.success) {
-      setWeeklyStats(data.stats);
-      localStorage.setItem("weeklyStats", JSON.stringify(data.stats));
+      let status = `Focused: ${result.focused ? "✅ Yes" : "❌ No"}\n`;
+      status += `Faces Detected: ${result.faces_count}\n`;
+
+      if (result.faces_count === 0) {
+        status += "⚠️ No face detected";
+      } else if (result.faces_count > 1) {
+        status += "🚨 Multiple faces detected";
+      } else {
+        status += `Direction: ${result.direction}\n`;
+        if (result.direction === "left" || result.direction === "right") {
+          status += "⚠️ Please look at the screen";
+        }
+      }
+
+      return status;
+    } catch (e) {
+      return "Waiting for valid data...";
     }
-  } catch (err) {
-    console.error("Error fetching weekly stats:", err);
-  }
-};
-
-
-
-
-
-
-
-const handleStopSave = async () => {
-  try {
-    if (youtubePlayerInstance?.pauseVideo) youtubePlayerInstance.pauseVideo();
-    else if (localVideoRef.current && !localVideoRef.current.paused)
-      localVideoRef.current.pause();
-
-    if (!sessionPlayedSeconds || sessionPlayedSeconds < 5) {
-      alert("⚠️ Watch at least 5 seconds before saving!");
-      return;
-    }
-
-    const token = localStorage.getItem("token");
-    const watchedSeconds = Math.round(sessionPlayedSeconds);
-    const totalTabSwitches = tabSwitches;
-
-    const currentVideoKey = videoId || localVideoFile?.name;
-
-    console.log("🎬 Saving session with notes & tag:", {
-      videoId,
-      watchedSeconds,
-      totalTabSwitches,
-      noteText,
-      tagText,
-    });
-
-    // ✅ Send ALL data including notes + tag in ONE request
-    const response = await fetch("/api/tracking/add-history", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({
-        videoId: currentVideoKey,
-        url: videoId
-          ? `https://youtu.be/${videoId}`
-          : localVideoFile?.name || "Local File",
-        secondsWatched: watchedSeconds,
-        tabSwitches: totalTabSwitches,
-        note: noteText,
-        tag: tagText,
-      }),
-    });
-
-    const data = await response.json();
-    if (!data.success) throw new Error(data.message);
-
-    // Update UI history
-    setAppState((prev) => ({
-      ...prev,
-      history: data.history,
-    }));
-    localStorage.setItem("userHistory", JSON.stringify(data.history));
-
-    // Update chart immediately
-    await fetchWeeklyStats();
-
-    // Clean up session
-    finalizeSession(true);
-
-    alert("✅ Session + Notes + Tag saved!");
-  } catch (error) {
-    console.error("❌ Error saving session:", error);
-  }
-};
-
-
-const purchasePremium = () => {
-  const options = {
-    key: "rzp_test_123456789", // ← replace with your Razorpay test key
-    amount: 299 * 100,         // ₹299
-    currency: "INR",
-    name: "StudyBuddy Premium",
-    description: "Unlock premium coins and features",
-
-    handler: function (response) {
-      // SUCCESS → add coins
-      setAppState(prev => ({
-        ...prev,
-        coins: (prev.coins || 0) + 100,
-        premium: true,
-      }));
-
-      localStorage.setItem("coins", (appState.coins || 0) + 100);
-      localStorage.setItem("premium", "true");
-
-      alert("🎉 Payment Successful! Premium Activated!");
-      setShowZeroCoinsPopup(false);
-    },
-
-    theme: { color: "#4f46e5" },
   };
 
-  const rzp = new window.Razorpay(options);
-  rzp.open();
-};
 
 
 
+  const handleLoadContent = async () => {
+
+    if (appState.coins === 0) {
+      setShowZeroCoinsPopup(true);
+      return;
+    }
+
+
+    if (!inputUrl && !localVideoFile) {
+      alert("Please provide a video URL or upload a video file first!");
+      return;
+    }
+
+    // If YouTube URL given
+    if (inputUrl) {
+      const match = inputUrl.match(
+        /(?:v=|\/)([0-9A-Za-z_-]{11})(?:[?&]|$)/
+      );
+
+      if (!match || !match[1]) {
+        alert("Invalid YouTube URL or ID!");
+        return;
+      }
+
+      const id = match[1];
+
+      // 🔥 Study Check
+      const allowed = await isStudyVideo(id);
+      if (!allowed) {
+        setBlockedTitle("This video is not study related!");
+        setShowBlockedPopup(true);
+        playRestrictionSound();   // 🔔 ADD THIS LINE
+        return;
+      }
+
+
+      setVideoId(id);
+      setLocalVideoFile(null);
+      setShowTimerPopup(true);
+      return;
+    }
+
+    // If local video chosen
+    if (localVideoFile) {
+      setVideoId(null);
+      setShowTimerPopup(true);
+    }
+  };
+
+
+  const handleFileChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      setLocalVideoFile(file);
+      const objectUrl = URL.createObjectURL(file);
+      setLocalVideoObjectUrl(objectUrl);
+      setInputUrl(""); // Clear any YouTube link
+    }
+  };
+
+  const clearHistory = () => {
+    // Optional: clear backend stats if you’ve implemented an API for it
+    setHistory([]);
+    localStorage.removeItem("videoHistory");
+    console.log("History cleared!");
+  };
+
+  const confirmStartFocus = () => {
+    if (appState.coins <= 0) {
+      alert("You don’t have enough coins to start a focus session!");
+      return;
+    }
+
+    // Start the focus timer (or any logic you had before)
+    setIsFocusTimerPending(true);
+    setFocusRemaining(focusDuration);
+    console.log("Focus session started!");
+  };
+
+
+  const fetchWeeklyStats = async () => {
+    const token = localStorage.getItem("token");
+
+    // Try cache first
+    const cached = localStorage.getItem("weeklyStats");
+    if (cached) {
+      try {
+        setWeeklyStats(JSON.parse(cached));
+      } catch { }
+    }
+
+    try {
+      // Fetch from backend
+      const res = await fetch("/api/tracking/weekly-stats", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+
+      if (data.success) {
+        setWeeklyStats(data.stats);
+        localStorage.setItem("weeklyStats", JSON.stringify(data.stats));
+      }
+    } catch (err) {
+      console.error("Error fetching weekly stats:", err);
+    }
+  };
+
+
+
+
+
+
+
+  const handleStopSave = async () => {
+    try {
+      if (youtubePlayerInstance?.pauseVideo) youtubePlayerInstance.pauseVideo();
+      else if (localVideoRef.current && !localVideoRef.current.paused)
+        localVideoRef.current.pause();
+
+      if (!sessionPlayedSeconds || sessionPlayedSeconds < 5) {
+        alert("⚠️ Watch at least 5 seconds before saving!");
+        return;
+      }
+
+      const token = localStorage.getItem("token");
+      const watchedSeconds = Math.round(sessionPlayedSeconds);
+      const totalTabSwitches = tabSwitches;
+
+      const currentVideoKey = videoId || localVideoFile?.name;
+
+      console.log("🎬 Saving session with notes & tag:", {
+        videoId,
+        watchedSeconds,
+        totalTabSwitches,
+        noteText,
+        tagText,
+      });
+
+      // ✅ Send ALL data including notes + tag in ONE request
+      const response = await fetch("/api/tracking/add-history", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          videoId: currentVideoKey,
+          url: videoId
+            ? `https://youtu.be/${videoId}`
+            : localVideoFile?.name || "Local File",
+          secondsWatched: watchedSeconds,
+          tabSwitches: totalTabSwitches,
+          note: (appState.notes?.[currentVideoKey] ? appState.notes[currentVideoKey] + "\n" + noteText : noteText).trim(),
+          tag: tagText,
+        }),
+      });
+
+      const data = await response.json();
+      if (!data.success) throw new Error(data.message);
+
+      // Update UI history and stats
+      setAppState((prev) => ({
+        ...prev,
+        history: data.history,
+        notes: { ...(prev.notes || {}), [currentVideoKey]: (prev.notes?.[currentVideoKey] ? prev.notes[currentVideoKey] + "\n" + noteText : noteText).trim() }
+      }));
+      localStorage.setItem(`userHistory_${userId}`, JSON.stringify(data.history));
+
+
+      // Update chart immediately
+      await fetchWeeklyStats();
+
+      // Clean up session
+      finalizeSession(true);
+
+      alert("✅ Session + Notes + Tag saved!");
+    } catch (error) {
+      console.error("❌ Error saving session:", error);
+    }
+  };
+
+
+  const purchasePremium = () => {
+    const options = {
+      key: "rzp_test_123456789", // ← replace with your Razorpay test key
+      amount: 299 * 100,         // ₹299
+      currency: "INR",
+      name: "StudyBuddy Premium",
+      description: "Unlock premium coins and features",
+
+      handler: function (response) {
+        // SUCCESS → add coins
+        setAppState(prev => ({
+          ...prev,
+          coins: (prev.coins || 0) + 100,
+          premium: true,
+        }));
+
+        localStorage.setItem("coins", (appState.coins || 0) + 100);
+        localStorage.setItem("premium", "true");
+
+        alert("🎉 Payment Successful! Premium Activated!");
+        setShowZeroCoinsPopup(false);
+      },
+
+      theme: { color: "#4f46e5" },
+    };
+
+    const rzp = new window.Razorpay(options);
+    rzp.open();
+  };
+
+
+
+
+  // ⬇️ Download note as PDF
+  const handleDownloadPDF = () => {
+    if (!selectedNote.trim()) return;
+
+    try {
+      // Create a canvas element to render text
+      const canvas = document.createElement('canvas');
+      canvas.width = 800;
+      canvas.height = 1100;
+      const ctx = canvas.getContext('2d');
+
+      // Set up the canvas
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#000000';
+      ctx.font = 'bold 24px Arial';
+      ctx.fillText('Study Note', 40, 60);
+
+      // Add date
+      ctx.font = '12px Arial';
+      ctx.fillStyle = '#666666';
+      ctx.fillText(`Date: ${new Date().toLocaleDateString()}`, 40, 90);
+
+      // Add note content
+      ctx.fillStyle = '#000000';
+      ctx.font = '14px Arial';
+      const maxWidth = 720;
+      const lineHeight = 20;
+      let y = 130;
+
+      // Word wrap text
+      const words = selectedNote.split(' ');
+      let line = '';
+
+      for (let i = 0; i < words.length; i++) {
+        const test = line + words[i] + ' ';
+        const metrics = ctx.measureText(test);
+
+        if (metrics.width > maxWidth && line) {
+          ctx.fillText(line, 40, y);
+          y += lineHeight;
+          line = words[i] + ' ';
+        } else {
+          line = test;
+        }
+      }
+      if (line) {
+        ctx.fillText(line, 40, y);
+      }
+
+      // Convert canvas to blob and download
+      canvas.toBlob((blob) => {
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `study-note-${Date.now()}.png`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+      });
+    } catch (err) {
+      console.error('Error downloading PDF:', err);
+      alert('Failed to download note');
+    }
+  };
+
+  // 📝 Generate and handle Note PDF (View or Download)
+  const generateNotePDF = (noteContent, fileName, mode = 'download') => {
+    if (!noteContent) return;
+
+    const doc = new jsPDF();
+    const margin = 20;
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const maxWidth = pageWidth - (margin * 2);
+
+    // Header
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(18);
+    doc.text("Study Session Note", margin, 20);
+
+    // Metadata
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.setTextColor(100);
+    doc.text(`Generated on: ${new Date().toLocaleString()}`, margin, 30);
+    doc.line(margin, 35, pageWidth - margin, 35);
+
+    // Content
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(12);
+    doc.setTextColor(0);
+
+    const splitText = doc.splitTextToSize(noteContent, maxWidth);
+    doc.text(splitText, margin, 45);
+
+    if (mode === 'view') {
+      const blob = doc.output('blob');
+      const url = URL.createObjectURL(blob);
+      const newWindow = window.open(url, '_blank');
+      if (!newWindow) {
+        alert("Popup blocked! Please allow popups for this site to view the PDF.");
+      }
+    } else {
+      doc.save(`${fileName}.pdf`);
+    }
+  };
 
   // ⬇️ put handleSaveNotes here, inside component ⬇️
   const handleSaveNotes = async () => {
@@ -1506,6 +1870,9 @@ const purchasePremium = () => {
       return;
     }
 
+    const existingNote = appState.notes?.[currentVideoKey] || "";
+    const updatedNote = (existingNote ? existingNote + "\n" + noteText : noteText).trim();
+
     try {
       const token = localStorage.getItem("token");
       const res = await fetch("/api/tracking/save-note-tag", {
@@ -1517,7 +1884,7 @@ const purchasePremium = () => {
         credentials: "include",
         body: JSON.stringify({
           videoId: currentVideoKey,
-          noteText,
+          noteText: updatedNote,
           tagText,
         }),
       });
@@ -1527,19 +1894,23 @@ const purchasePremium = () => {
 
       setAppState((prev) => ({
         ...prev,
-        notes: { ...prev.notes, ...data.notes },
-        tags: { ...prev.tags, ...data.tags },
+        notes: data.notes || prev.notes,
+        tags: data.tags || prev.tags,
         history: data.history || prev.history,
       }));
 
+      setNoteText(""); // 📓 Clear textarea after appending
+
       localStorage.setItem(
-        "userNotes",
+        `userNotes_${userId}`,
         JSON.stringify({ ...appState.notes, ...data.notes })
       );
+
       localStorage.setItem(
-        "userTags",
+        `userTags_${userId}`,
         JSON.stringify({ ...appState.tags, ...data.tags })
       );
+
 
       alert("✅ Notes & Tag saved successfully!");
     } catch (err) {
@@ -1550,51 +1921,51 @@ const purchasePremium = () => {
 
 
 
-// const handleStartFocusTimer = () => {
-//   if (!focusMinutes || focusMinutes <= 0) {
-//     alert("Please enter a valid focus time!");
-//     return;
-//   }
+  // const handleStartFocusTimer = () => {
+  //   if (!focusMinutes || focusMinutes <= 0) {
+  //     alert("Please enter a valid focus time!");
+  //     return;
+  //   }
 
-//   // ⏱️ Start the focus timer
-//   setFocusRemaining(focusMinutes * 60);
+  //   // ⏱️ Start the focus timer
+  //   setFocusRemaining(focusMinutes * 60);
 
-//   // 🔒 Close the popup
-//   setShowTimerPopup(false);
+  //   // 🔒 Close the popup
+  //   setShowTimerPopup(false);
 
-//   // 🎬 Start video automatically after popup closes
-//   setTimeout(() => {
-//     if (playerRef.current && playerRef.current.playVideo) {
-//       playerRef.current.playVideo(); // for YouTube
-//     } else if (localVideoRef.current) {
-//       localVideoRef.current.play(); // for local file
-//     }
-//   }, 500);
-// };
+  //   // 🎬 Start video automatically after popup closes
+  //   setTimeout(() => {
+  //     if (playerRef.current && playerRef.current.playVideo) {
+  //       playerRef.current.playVideo(); // for YouTube
+  //     } else if (localVideoRef.current) {
+  //       localVideoRef.current.play(); // for local file
+  //     }
+  //   }, 500);
+  // };
 
 
-const handleStartFocusTimer = () => {
-  // ✅ Focus timer ONLY for YouTube
-  if (!videoId) {
-    alert("Focus timer only works for YouTube videos.");
-    setShowTimerPopup(false);
-    return;
-  }
-
-  if (!focusMinutes || focusMinutes <= 0) {
-    alert("Please enter a valid focus time!");
-    return;
-  }
-
-  setFocusRemaining(focusMinutes * 60);
-  setShowTimerPopup(false);
-
-  setTimeout(() => {
-    if (youtubePlayerRef.current?.playVideo) {
-      youtubePlayerRef.current.playVideo();
+  const handleStartFocusTimer = () => {
+    // ✅ Focus timer ONLY for YouTube
+    if (!videoId) {
+      alert("Focus timer only works for YouTube videos.");
+      setShowTimerPopup(false);
+      return;
     }
-  }, 500);
-};
+
+    if (!focusMinutes || focusMinutes <= 0) {
+      alert("Please enter a valid focus time!");
+      return;
+    }
+
+    setFocusRemaining(focusMinutes * 60);
+    setShowTimerPopup(false);
+
+    setTimeout(() => {
+      if (youtubePlayerRef.current?.playVideo) {
+        youtubePlayerRef.current.playVideo();
+      }
+    }, 500);
+  };
 
 
 
@@ -1603,18 +1974,18 @@ const handleStartFocusTimer = () => {
   return (
     <div style={styles.page}>
 
-   
 
-    <div style={styles.container}>
-      <div style={styles.header}>
-        <h1 style={styles.title}>Study Video Tracker</h1>
-        <div style={styles.wallet}>
-          <span style={styles.statChip}>🪙 {appState.coins}</span>
-          <span style={styles.statChip}>
-            🔥 {appState.streak} day streak
-          </span>
+
+      <div style={styles.container}>
+        <div style={styles.header}>
+          <h1 style={styles.title}>Study Video Tracker</h1>
+          <div style={styles.wallet}>
+            <span style={styles.statChip}>🪙 {appState.coins}</span>
+            <span style={styles.statChip}>
+              🔥 {appState.streak} day streak
+            </span>
+          </div>
         </div>
-      </div>
 
         {/* Input + Load */}
         <div style={styles.panel}>
@@ -1647,7 +2018,7 @@ const handleStartFocusTimer = () => {
                 style={{ display: "none" }}
                 disabled={appState.coins <= 0}
               />
-              {localVideoFile && <span style={{fontSize: "14px", color: "#4b5563"}}>Selected: {localVideoFile.name}</span>}
+              {localVideoFile && <span style={{ fontSize: "14px", color: "#4b5563" }}>Selected: {localVideoFile.name}</span>}
             </div>
             <button
               onClick={clearHistory}
@@ -1666,7 +2037,7 @@ const handleStartFocusTimer = () => {
 </button> */}
           </div>
         </div>
-        
+
         {/* NEW PANEL FOR CAMERA ANALYSIS
         <div style={styles.panel}>
           <h3 style={styles.sectionTitle}>
@@ -1723,37 +2094,37 @@ const handleStartFocusTimer = () => {
 
 
         {/* NEW PANEL FOR CAMERA ANALYSIS */}
-<div style={styles.panel}>
-  <h3 style={styles.sectionTitle}>
-    👁️ Live Focus & Face Detection (OpenCV)
-  </h3>
+        <div style={styles.panel}>
+          <h3 style={styles.sectionTitle}>
+            👁️ Live Focus & Face Detection (OpenCV)
+          </h3>
 
-  <button
-    onClick={toggleDetector}
-    style={{ ...styles.button, marginBottom: "16px" }}
-  >
-    {showCameraAnalysis ? "Stop Camera Analysis" : "Start Camera Analysis"}
-  </button>
+          <button
+            onClick={toggleDetector}
+            style={{ ...styles.button, marginBottom: "16px" }}
+          >
+            {showCameraAnalysis ? "Stop Camera Analysis" : "Start Camera Analysis"}
+          </button>
 
-  {showCameraAnalysis && (
-    <div>
-      <h4 style={{ marginBottom: "10px" }}>
-        📷 Live Camera (Face + Phone Detection)
-      </h4>
+          {showCameraAnalysis && (
+            <div>
+              <h4 style={{ marginBottom: "10px" }}>
+                📷 Live Camera (Face + Phone Detection)
+              </h4>
 
-      <img
-        src="http://localhost:5001/video_feed"
-        alt="Live Detector Feed"
-        style={{
-          width: "100%",
-          maxWidth: "520px",
-          borderRadius: "12px",
-          border: "1px solid #ddd",
-          marginBottom: "20px",
-        }}
-      />
+              <img
+                src="http://localhost:5001/video_feed"
+                alt="Live Detector Feed"
+                style={{
+                  width: "100%",
+                  maxWidth: "520px",
+                  borderRadius: "12px",
+                  border: "1px solid #ddd",
+                  marginBottom: "20px",
+                }}
+              />
 
-      {/* <img
+              {/* <img
      src={`http://localhost:5001/video_feed?ts=${Date.now()}`}
      alt="Live Detector Feed"
      style={{
@@ -1766,26 +2137,26 @@ const handleStartFocusTimer = () => {
   /> */}
 
 
-      <div style={{ marginTop: "20px" }}>
-        <h3>📊 Focus Dashboard</h3>
+              <div style={{ marginTop: "20px" }}>
+                <h3>📊 Focus Dashboard</h3>
 
-        <iframe
-          src="http://localhost:8501"
-          style={{
-            width: "100%",
-            height: "400px",
-            border: "none",
-            borderRadius: "12px",
-          }}
-        />
-      </div>
-    </div>
-  )}
-</div>
+                <iframe
+                  src="http://localhost:8501"
+                  style={{
+                    width: "100%",
+                    height: "400px",
+                    border: "none",
+                    borderRadius: "12px",
+                  }}
+                />
+              </div>
+            </div>
+          )}
+        </div>
 
 
 
-        
+
 
 
         {/* Popups */}
@@ -1840,66 +2211,66 @@ const handleStartFocusTimer = () => {
               </p>
             </div>
           </div>
-        
+
         )}
 
 
         {showBlockedPopup && (
-  <div style={blockedStyles.overlay}>
-    <div style={blockedStyles.popup}>
-      <h2 style={blockedStyles.title}>⚠️ Access Blocked</h2>
-      <p style={blockedStyles.message}>
-        {blockedTitle || "This video is not allowed because it is not study-related."}
-      </p>
+          <div style={blockedStyles.overlay}>
+            <div style={blockedStyles.popup}>
+              <h2 style={blockedStyles.title}>⚠️ Access Blocked</h2>
+              <p style={blockedStyles.message}>
+                {blockedTitle || "This video is not allowed because it is not study-related."}
+              </p>
 
-      <button
-        onClick={() => setShowBlockedPopup(false)}
-        style={blockedStyles.button}
-      >
-        Go Back
-      </button>
-    </div>
-  </div>
-)}
+              <button
+                onClick={() => setShowBlockedPopup(false)}
+                style={blockedStyles.button}
+              >
+                Go Back
+              </button>
+            </div>
+          </div>
+        )}
 
 
         {coinsLoaded && appState.coins === 0 && (
-  <div style={styles.popup}>
-    <div style={{ ...styles.popupInner, border: "2px solid #f59e0b" }}>
-      <h3 style={{ ...styles.popupTitle, color: "#d97706" }}>
-        ⚠️ You’re out of coins!
-      </h3>
+          <div style={styles.popup}>
+            <div style={{ ...styles.popupInner, border: "2px solid #f59e0b" }}>
+              <h3 style={{ ...styles.popupTitle, color: "#d97706" }}>
+                ⚠️ You’re out of coins!
+              </h3>
 
-      <p style={styles.popupText}>
-        Upgrade to <strong>Premium</strong> to continue watching videos and using focus mode.
-      </p>
+              <p style={styles.popupText}>
+                Upgrade to <strong>Premium</strong> to continue watching videos and using focus mode.
+              </p>
 
-      <div style={{
-        fontSize: "1.4em",
-        fontWeight: "700",
-        margin: "10px 0",
-        color: "#111",
-      }}>
-        💎 Premium – <span style={{ color: "#16a34a" }}>₹299</span>
-      </div>
+              <div style={{
+                fontSize: "1.4em",
+                fontWeight: "700",
+                margin: "10px 0",
+                color: "#111",
+              }}>
+                💎 Premium – <span style={{ color: "#16a34a" }}>₹299</span>
+              </div>
 
-      <button
-        onClick={purchasePremium}
-        style={{
-          ...styles.button,
-          background: "#16a34a",
-          width: "100%",
-          padding: "12px",
-          fontSize: "1.1em",
-        }}
-      >
-        Unlock Premium for ₹299
-      </button>
+              <button
+                onClick={purchasePremium}
+                style={{
+                  ...styles.button,
+                  background: "#16a34a",
+                  width: "100%",
+                  padding: "12px",
+                  fontSize: "1.1em",
+                }}
+              >
+                Unlock Premium for ₹299
+              </button>
 
 
-    </div>
-  </div>
-)}
+            </div>
+          </div>
+        )}
 
 
         {/* Player Area */}
@@ -1933,12 +2304,12 @@ const handleStartFocusTimer = () => {
                     style={{ width: "100%", height: "100%", objectFit: "contain" }}
                   />
                 )}
-                  <button
-                    onClick={() => setIsPlayerMaximized((s) => !s)}
-                    style={styles.toggleMaxMinButton}
-                  >
-                    {isPlayerMaximized ? "Minimize" : "Maximize"}
-                  </button>
+                <button
+                  onClick={() => setIsPlayerMaximized((s) => !s)}
+                  style={styles.toggleMaxMinButton}
+                >
+                  {isPlayerMaximized ? "Minimize" : "Maximize"}
+                </button>
               </div>
               <div style={styles.controlsAndStats}>
                 <div>
@@ -1953,11 +2324,11 @@ const handleStartFocusTimer = () => {
                   </button>
                 </div>
                 <div style={styles.statsText}>
-                   <div>
-                   Watched: <strong>{niceTime(sessionPlayedSeconds)}</strong>
-                    </div>
-                 This Video Tab Switches: <strong>{tabSwitches}</strong>
-               </div>
+                  <div>
+                    Watched: <strong>{niceTime(sessionPlayedSeconds)}</strong>
+                  </div>
+                  This Video Tab Switches: <strong>{tabSwitches}</strong>
+                </div>
               </div>
               <div style={{ marginTop: "16px" }}>
                 <textarea
@@ -1985,7 +2356,7 @@ const handleStartFocusTimer = () => {
                 </div>
               </div>
 
-                
+
 
 
             </>
@@ -1998,78 +2369,119 @@ const handleStartFocusTimer = () => {
 
 
         {/* ================== PERMANENT NOTES PANEL ================== */}
-{/* ================== STICKY NOTE STYLE NOTES PANEL ================== */}
-<div style={stickyNotes.panel}>
+        {/* ================== STICKY NOTE STYLE NOTES PANEL ================== */}
+        <div style={stickyNotes.panel}>
 
-  <h3 style={stickyNotes.heading}>
-    <span style={stickyNotes.icon}>📌</span> Saved Notes
-  </h3>
+          <h3 style={stickyNotes.heading}>
+            <span style={stickyNotes.icon}>📌</span> Saved Notes
+          </h3>
 
-  {!currentActiveVideoIdentifier ? (
-    <p style={stickyNotes.emptyMsg}>Load a video to view saved notes.</p>
-  ) : appState.notes?.[currentActiveVideoIdentifier] ? (
-    <div style={stickyNotes.stickyCard}>
-      <div style={stickyNotes.pin}></div>
+          {!currentActiveVideoIdentifier ? (
+            <p style={stickyNotes.emptyMsg}>Load a video to view saved notes.</p>
+          ) : (() => {
+            const existing = appState.notes?.[currentActiveVideoIdentifier] || "";
+            const cumulative = (existing ? existing + (noteText.trim() ? "\n" + noteText : "") : noteText).trim();
 
-      <div style={stickyNotes.noteText}>
-        {appState.notes[currentActiveVideoIdentifier]}
-      </div>
+            if (!cumulative) return <p style={stickyNotes.emptyMsg}>No notes saved yet for this video. Add one! ✨</p>;
 
-      {appState.tags?.[currentActiveVideoIdentifier] && (
-        <div style={stickyNotes.tag}>#{appState.tags[currentActiveVideoIdentifier]}</div>
-      )}
+            return (
+              <div style={stickyNotes.stickyCard}>
+                <div style={stickyNotes.pin}></div>
+                <div style={stickyNotes.noteText}>{cumulative}</div>
+                {appState.tags?.[currentActiveVideoIdentifier] && (
+                  <div style={stickyNotes.tag}>#{appState.tags[currentActiveVideoIdentifier]}</div>
+                )}
+                <div style={stickyNotes.date}>
+                  Last updated: <strong>{new Date().toLocaleString()}</strong>
+                </div>
+              </div>
+            );
+          })()}
 
-      <div style={stickyNotes.date}>
-        Last updated:
-        <strong> {new Date().toLocaleString()}</strong>
-      </div>
-    </div>
-  ) : (
-    <p style={stickyNotes.emptyMsg}>No notes saved yet for this video. Add one! ✨</p>
-  )}
-
-</div>
-{/* ================================================================== */}
+        </div>
+        {/* ================================================================== */}
 
 
 
         {/* Stats & History */}
         <div style={styles.panel}>
-          <h3 style={styles.sectionTitle}>
-            📊 Weekly Study Performance (minutes)
-          </h3>
-          <div style={{ height: 220, marginTop: "16px" }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart
-                data={Object.keys(weeklyStats).map((k) => ({
-                  date: k,
-                  mins: weeklyStats[k],
-                }))}
+          <h3 style={styles.sectionTitle}>📊 Monthly Study Performance</h3>
+
+          {/* Month selector */}
+          <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 12 }}>
+            <select
+              value={selectedMonth}
+              onChange={(e) => setSelectedMonth(Number(e.target.value))}
+              style={{ padding: "8px 10px", borderRadius: 8 }}
+            >
+              {MONTHS.map((m, i) => (
+                <option key={m} value={i}>{m}</option>
+              ))}
+            </select>
+
+            <input
+              type="number"
+              value={selectedYear}
+              onChange={(e) => setSelectedYear(Number(e.target.value))}
+              style={{ width: 100, padding: "8px 10px", borderRadius: 8 }}
+            />
+
+            <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+              <button
+                onClick={() => setMonthStartIndex((s) => Math.max(0, s - 10))}
+                style={{ padding: "6px 10px", fontSize: 14 }}
               >
-                <CartesianGrid
-                  strokeDasharray="3 3"
-                  stroke="rgba(0,0,0,0.1)"
+                ◀ Prev 10
+              </button>
+              <button
+                onClick={() => setMonthStartIndex((s) => Math.min(Math.max(0, monthData.length - 10), s + 10))}
+                style={{ padding: "6px 10px", fontSize: 14 }}
+              >
+                Next 10 ▶
+              </button>
+            </div>
+          </div>
+
+          {/* Info - swipe/trackpad to move by 10 days */}
+          <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 8 }}>
+            <span style={{ color: "#6b7280" }}>
+              Showing {monthData.length ? monthData[Math.min(monthStartIndex, monthData.length - 1)].label : "—"}
+              {" "}to{" "}
+              {monthData.length ? monthData[Math.min(monthStartIndex + 9, monthData.length - 1)].label : "—"}
+            </span>
+            <span style={{ marginLeft: "auto", color: "#9ca3af", fontSize: 13 }}>
+            </span>
+          </div>
+
+          {/* Chart area listens for wheel/touch to change frame by 10 days */}
+          <div
+            onWheel={handleWheelNav}
+            onTouchStart={onTouchStart}
+            onTouchEnd={onTouchEnd}
+            style={{ height: 320, marginTop: "8px", touchAction: "pan-y", cursor: "grab" }}
+          >
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={monthData.slice(monthStartIndex, monthStartIndex + 10)}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.05)" />
+                <XAxis dataKey="label" tick={{ fill: "#4b5563" }} />
+                {/* <YAxis tick={{ fill: "#4b5563" }} /> */}
+                <YAxis
+                  domain={[0, 1440]}
+                  ticks={[0, 180, 360, 540, 720, 900, 1080, 1260, 1440]}
+                  tickFormatter={(v) => {
+                    const hours = v / 60;
+                    return hours === 0 ? "0" : `${hours}h`;
+                  }}
+                  tick={{ fill: "#4b5563" }}
+                  interval={0}
                 />
-                <XAxis dataKey="date" tick={{ fill: "#4b5563" }} />
-                <YAxis tick={{ fill: "#4b5563" }} />
+
                 <Tooltip contentStyle={styles.tooltip} />
-                <Bar
-                  dataKey="mins"
-                  fill="url(#colorUv)"
-                  radius={[8, 8, 0, 0]}
-                />
+                <Bar dataKey="mins" fill="url(#colorUv)" radius={[8, 8, 0, 0]} />
                 <defs>
                   <linearGradient id="colorUv" x1="0" y1="0" x2="0" y2="1">
-                    <stop
-                      offset="5%"
-                      stopColor="#4f46e5"
-                      stopOpacity={0.8}
-                    />
-                    <stop
-                      offset="95%"
-                      stopColor="#d946ef"
-                      stopOpacity={0.8}
-                    />
+                    <stop offset="5%" stopColor="#4f46e5" stopOpacity={0.85} />
+                    <stop offset="95%" stopColor="#d946ef" stopOpacity={0.85} />
                   </linearGradient>
                 </defs>
               </BarChart>
@@ -2077,65 +2489,353 @@ const handleStartFocusTimer = () => {
           </div>
         </div>
 
-         {/* 🎬 History Section */}
-<div style={styles.panel}>
-  <h3 style={styles.sectionTitle}>🎬 Last 5 Study Sessions</h3>
+        {/* 🎬 History Section - Compact Dashboard Widgets */}
+        <div style={styles.panel}>
+          <h3 style={styles.sectionTitle}>🎬 Last 5 Study Sessions</h3>
 
-  {(appState.history || []).length === 0 ? (
-    <p>No recent study sessions found.</p>
-  ) : (
-    (appState.history || []).map((h, i) => (
-      <div
-        key={i}
-        className="history-card"
-        style={{
-          background: "#f3f4f6",
-          padding: "10px",
-          borderRadius: "10px",
-          marginBottom: "8px",
-        }}
-      >
-        <p>
-          <b>Video:</b>{" "}
-          <a href={h.url} target="_blank" rel="noreferrer">
-            {h.videoId}
-          </a>
-        </p>
+          {(appState.history || []).length === 0 ? (
+            <p style={{ color: "#9ca3af", fontSize: "0.9rem" }}>No recent study sessions found.</p>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: "10px" }}>
+              {(appState.history || []).slice(0, 5).map((h, i) => {
+                const seconds = h.seconds || h.secondsWatched || 0;
+                const minutes = Math.floor(seconds / 60);
+                const secs = seconds % 60;
+                const displayDuration = minutes > 0 ? `${minutes}m ${secs}s` : `${secs}s`;
+                const switches = h.tabSwitches || 0;
 
-        <p>
-          <b>Watched:</b>{" "}
-          {h.secondsWatched >= 60
-            ? `${Math.floor(h.secondsWatched / 60)}m ${h.secondsWatched % 60}s`
-            : `${h.secondsWatched || 0}s`}
-        </p>
+                const watchDate = h.watchedAt
+                  ? h.watchedAt.includes("T")
+                    ? new Date(h.watchedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })
+                    : h.watchedAt
+                  : "N/A";
 
-        <p>
-          <b>Tab Switches:</b> {h.tabSwitches}
-        </p>
+                return (
+                  <div
+                    key={i}
+                    style={{
+                      background: "#ffffff",
+                      borderRadius: "10px",
+                      padding: "12px",
+                      boxShadow: "0 1px 3px rgba(0, 0, 0, 0.08)",
+                      border: "1px solid #e5e7eb",
+                      display: "flex",
+                      flexDirection: "column",
+                      transition: "all 0.2s ease",
+                      cursor: "pointer",
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.boxShadow = "0 3px 8px rgba(0, 0, 0, 0.12)";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.boxShadow = "0 1px 3px rgba(0, 0, 0, 0.08)";
+                    }}
+                  >
+                    {/* Title */}
+                    <h4 style={{ margin: "0 0 8px 0", fontSize: "0.9rem", fontWeight: "600", color: "#1f2937", wordBreak: "break-word" }}>
+                      <a
+                        href={h.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{
+                          color: "#4f46e5",
+                          textDecoration: "none",
+                          fontSize: "0.85rem",
+                          display: "block",
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        }}
+                      >
+                        {h.videoId}
+                      </a>
+                    </h4>
 
-        <p>
-          <b>Date:</b> {new Date(h.watchedAt).toLocaleDateString()}
-        </p>
-        {h.note && (
-  <p>
-    <b>Note:</b> {h.note}
-  </p>
-)}
-{h.tag && (
-  <p>
-    <b>Tag:</b> {h.tag}
-  </p>
-)}
+                    {/* Stats Grid */}
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", marginBottom: "8px" }}>
+                      <div>
+                        <p style={{ margin: "0 0 2px 0", fontSize: "0.7rem", color: "#9ca3af", fontWeight: "600", textTransform: "uppercase" }}>
+                          Duration
+                        </p>
+                        <p style={{ margin: "0", fontSize: "0.85rem", fontWeight: "700", color: "#059669" }}>
+                          {displayDuration}
+                        </p>
+                      </div>
+                      <div>
+                        <p style={{ margin: "0 0 2px 0", fontSize: "0.7rem", color: "#9ca3af", fontWeight: "600", textTransform: "uppercase" }}>
+                          Switches
+                        </p>
+                        <p style={{ margin: "0", fontSize: "0.85rem", fontWeight: "700", color: switches > 0 ? "#dc2626" : "#6b7280" }}>
+                          {switches}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Date */}
+                    <p style={{ margin: "0 0 8px 0", fontSize: "0.75rem", color: "#9ca3af" }}>
+                      {watchDate}
+                    </p>
+
+                    {/* Tag & Note */}
+                    <div style={{ marginTop: "auto" }}>
+                      {h.tag && (
+                        <div style={{ marginBottom: "8px" }}>
+                          <span
+                            style={{
+                              display: "inline-block",
+                              background: "#f0f4ff",
+                              color: "#4f46e5",
+                              padding: "3px 8px",
+                              borderRadius: "5px",
+                              fontSize: "0.7rem",
+                              fontWeight: "600",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            #{h.tag}
+                          </span>
+                        </div>
+                      )}
+                      {(h.note || h.notes) && (
+                        <button
+                          onClick={(e) => {
+                            e.preventDefault();
+                            const actualNote = h.note || h.notes;
+                            setSelectedNote(actualNote);
+                            setShowNoteModal(true);
+                          }}
+                          style={{
+                            width: "100%",
+                            padding: "6px 12px",
+                            backgroundColor: "#f0f4ff",
+                            border: "1px solid #c7d2fe",
+                            borderRadius: "5px",
+                            fontSize: "0.75rem",
+                            fontWeight: "600",
+                            color: "#4f46e5",
+                            cursor: "pointer",
+                            transition: "all 0.2s ease",
+                            marginBottom: "6px"
+                          }}
+                          onMouseEnter={(e) => {
+                            e.target.style.backgroundColor = "#e0e7ff";
+                          }}
+                          onMouseLeave={(e) => {
+                            e.target.style.backgroundColor = "#f0f4ff";
+                          }}
+                        >
+                          📝 View Note
+                        </button>
+                      )}
+
+                      <div style={{ display: "flex", gap: "6px" }}>
+                        <button
+                          onClick={(e) => {
+                            e.preventDefault();
+                            const actualNote = h.note || h.notes;
+                            generateNotePDF(actualNote, `note-${h.videoId}-${i}`, 'view');
+                          }}
+                          disabled={!(h.note || h.notes)}
+                          style={{
+                            flex: 1,
+                            padding: "6px 4px",
+                            backgroundColor: (h.note || h.notes) ? "#f0f4ff" : "#f9fafb",
+                            border: `1px solid ${(h.note || h.notes) ? "#c7d2fe" : "#e5e7eb"}`,
+                            borderRadius: "5px",
+                            fontSize: "0.65rem",
+                            fontWeight: "600",
+                            color: (h.note || h.notes) ? "#4f46e5" : "#9ca3af",
+                            cursor: (h.note || h.notes) ? "pointer" : "not-allowed",
+                          }}
+                        >
+                          📄 View PDF
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.preventDefault();
+                            const actualNote = h.note || h.notes;
+                            generateNotePDF(actualNote, `note-${h.videoId}-${i}`, 'download');
+                          }}
+                          disabled={!(h.note || h.notes)}
+                          style={{
+                            flex: 1,
+                            padding: "6px 4px",
+                            backgroundColor: (h.note || h.notes) ? "#f0f4ff" : "#f9fafb",
+                            border: `1px solid ${(h.note || h.notes) ? "#c7d2fe" : "#e5e7eb"}`,
+                            borderRadius: "5px",
+                            fontSize: "0.65rem",
+                            fontWeight: "600",
+                            color: (h.note || h.notes) ? "#4f46e5" : "#9ca3af",
+                            cursor: (h.note || h.notes) ? "pointer" : "not-allowed",
+                          }}
+                        >
+                          📥 Download PDF
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+
+
 
       </div>
-    ))
-  )}
-</div>
 
+      {/* Note Modal */}
+      {showNoteModal && (
+        <div
+          style={{
+            position: "fixed",
+            top: "0",
+            left: "0",
+            right: "0",
+            bottom: "0",
+            backgroundColor: "rgba(0, 0, 0, 0.5)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: "10000",
+            padding: "20px",
+          }}
+          onClick={() => setShowNoteModal(false)}
+        >
+          <div
+            style={{
+              backgroundColor: "#ffffff",
+              borderRadius: "12px",
+              boxShadow: "0 10px 40px rgba(0, 0, 0, 0.2)",
+              maxWidth: "600px",
+              width: "100%",
+              maxHeight: "80vh",
+              display: "flex",
+              flexDirection: "column",
+              overflow: "hidden",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div
+              style={{
+                padding: "16px 20px",
+                borderBottom: "1px solid #e5e7eb",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+              }}
+            >
+              <h3 style={{ margin: "0", fontSize: "1.1rem", fontWeight: "700", color: "#1f2937" }}>
+                📝 Study Note
+              </h3>
+              <button
+                onClick={() => setShowNoteModal(false)}
+                style={{
+                  background: "none",
+                  border: "none",
+                  fontSize: "1.5rem",
+                  cursor: "pointer",
+                  padding: "0",
+                  width: "32px",
+                  height: "32px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: "#6b7280",
+                  transition: "color 0.2s",
+                }}
+                onMouseEnter={(e) => (e.target.style.color = "#111827")}
+                onMouseLeave={(e) => (e.target.style.color = "#6b7280")}
+              >
+                ✕
+              </button>
+            </div>
 
+            {/* Content - Scrollable */}
+            <div
+              style={{
+                flex: "1",
+                overflowY: "auto",
+                padding: "20px",
+                fontSize: "0.95rem",
+                lineHeight: "1.6",
+                color: "#374151",
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+              }}
+            >
+              {selectedNote}
+            </div>
 
-
-      </div>
+            {/* Footer */}
+            <div
+              style={{
+                padding: "12px 20px",
+                borderTop: "1px solid #e5e7eb",
+                display: "flex",
+                justifyContent: "flex-end",
+                gap: "10px",
+              }}
+            >
+              <button
+                onClick={(e) => {
+                  e.preventDefault();
+                  generateNotePDF(selectedNote, `note-${Date.now()}`, 'view');
+                }}
+                disabled={!selectedNote}
+                style={{
+                  padding: "8px 16px",
+                  backgroundColor: selectedNote ? "#f0f4ff" : "#f9fafb",
+                  border: `1px solid ${selectedNote ? "#c7d2fe" : "#e5e7eb"}`,
+                  borderRadius: "6px",
+                  fontSize: "0.9rem",
+                  fontWeight: "600",
+                  color: selectedNote ? "#4f46e5" : "#9ca3af",
+                  cursor: selectedNote ? "pointer" : "not-allowed",
+                }}
+              >
+                📄 View PDF
+              </button>
+              <button
+                onClick={(e) => {
+                  e.preventDefault();
+                  generateNotePDF(selectedNote, `note-${Date.now()}`, 'download');
+                }}
+                disabled={!selectedNote}
+                style={{
+                  padding: "8px 16px",
+                  backgroundColor: selectedNote ? "#10b981" : "#f9fafb",
+                  border: "none",
+                  borderRadius: "6px",
+                  fontSize: "0.9rem",
+                  fontWeight: "500",
+                  color: selectedNote ? "#ffffff" : "#9ca3af",
+                  cursor: selectedNote ? "pointer" : "not-allowed",
+                }}
+              >
+                📥 Download PDF
+              </button>
+              <button
+                onClick={() => setShowNoteModal(false)}
+                style={{
+                  padding: "8px 16px",
+                  backgroundColor: "#f3f4f6",
+                  border: "1px solid #d1d5db",
+                  borderRadius: "6px",
+                  fontSize: "0.9rem",
+                  fontWeight: "500",
+                  color: "#111827",
+                  cursor: "pointer",
+                }}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2143,7 +2843,7 @@ const handleStartFocusTimer = () => {
 // Basic styles to make the component runnable
 const styles = {
 
-  page: { background: '#f3f4f6',  width: '100vw', minHeight: '100vh', padding: '24px', boxSizing: 'border-box', fontFamily: 'sans-serif' },
+  page: { background: '#f3f4f6', width: '100vw', minHeight: '100vh', padding: '24px', boxSizing: 'border-box', fontFamily: 'sans-serif' },
   container: { width: '100%', maxWidth: '100%', margin: '0', display: 'flex', flexDirection: 'column', gap: '24px' },
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
   title: { fontSize: '2em', color: '#111827', margin: 0 },
@@ -2162,38 +2862,38 @@ const styles = {
   popupText: { color: '#4b5563', lineHeight: 1.5, marginTop: '16px' },
   smallBtn: { padding: '6px 12px', borderRadius: '6px', border: 'none', color: 'white', cursor: 'pointer' },
   focusBar: { background: '#dbeafe', color: '#1e40af', padding: '12px', borderRadius: '8px', marginBottom: '16px', textAlign: 'center', fontWeight: '500' },
-  player: { position: 'relative', width: '100%',  height: '70vh', background: '#000' },
+  player: { position: 'relative', width: '100%', height: '70vh', background: '#000' },
   playerMax: { position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', zIndex: 200, background: '#000' },
   toggleMaxMinButton: { position: 'absolute', bottom: '10px', right: '10px', zIndex: 210, background: 'rgba(0,0,0,0.6)', color: 'white', border: 'none', padding: '8px 12px', borderRadius: '6px', cursor: 'pointer' },
   controlsAndStats: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px' },
   statsText: { display: 'flex', gap: '24px', color: '#4b5563' },
   textarea: {
-  width: '100%',
-  height: '200px',          // ✅ fixed bigger height
-  padding: '14px 16px',
-  borderRadius: '10px',
-  border: '1px solid #d1d5db',
-  fontSize: '1.05em',
-  resize: 'none',           // ✅ size fixed rahe
-  overflowY: 'auto',        // ✅ andar scroll
-  lineHeight: '1.6',
-},
+    width: '100%',
+    height: '200px',          // ✅ fixed bigger height
+    padding: '14px 16px',
+    borderRadius: '10px',
+    border: '1px solid #d1d5db',
+    fontSize: '1.05em',
+    resize: 'none',           // ✅ size fixed rahe
+    overflowY: 'auto',        // ✅ andar scroll
+    lineHeight: '1.6',
+  },
 
   placeholder: { display: 'flex', justifyContent: 'center', alignItems: 'center', height: '200px', background: '#f9fafb', borderRadius: '8px', color: '#6b7280' },
   tooltip: { background: '#fff', border: '1px solid #d1d5db', padding: '8px', borderRadius: '8px' },
   warningBanner: {
-  position: "fixed",
-  top: 12,
-  left: "50%",
-  transform: "translateX(-50%)",
-  background: "#111827",
-  color: "white",
-  padding: "10px 16px",
-  borderRadius: "12px",
-  fontWeight: "600",
-  zIndex: 99999,
-  boxShadow: "0 8px 20px rgba(0,0,0,0.25)",
-},
+    position: "fixed",
+    top: 12,
+    left: "50%",
+    transform: "translateX(-50%)",
+    background: "#111827",
+    color: "white",
+    padding: "10px 16px",
+    borderRadius: "12px",
+    fontWeight: "600",
+    zIndex: 99999,
+    boxShadow: "0 8px 20px rgba(0,0,0,0.25)",
+  },
 
 };
 
@@ -2350,25 +3050,25 @@ const stickyNotes = {
   },
 
   stickyCard: {
-  position: "relative",
-  background: "#fff8a8",
-  padding: "20px",
-  height: "600px",          // ✅ fixed height
-  width: "100%",
-  borderRadius: "10px",
-  fontFamily: "'Patrick Hand', cursive, sans-serif",
-  fontSize: "1.1rem",
-  color: "#374151",
-  lineHeight: "1.6",
+    position: "relative",
+    background: "#fff8a8",
+    padding: "20px",
+    height: "600px",          // ✅ fixed height
+    width: "100%",
+    borderRadius: "10px",
+    fontFamily: "'Patrick Hand', cursive, sans-serif",
+    fontSize: "1.1rem",
+    color: "#374151",
+    lineHeight: "1.6",
 
-  // Scrollable content
-  overflowY: "auto",        // ✅ scroll inside
-  overflowX: "hidden",
+    // Scrollable content
+    overflowY: "auto",        // ✅ scroll inside
+    overflowX: "hidden",
 
-  // Sticky note shadow + tilt
-  boxShadow: "0 10px 18px rgba(0,0,0,0.12)",
-  transform: "rotate(-1.5deg)",
-},
+    // Sticky note shadow + tilt
+    boxShadow: "0 10px 18px rgba(0,0,0,0.12)",
+    transform: "rotate(-1.5deg)",
+  },
 
 
   // Red pin on top center
